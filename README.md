@@ -130,23 +130,26 @@ git clone https://github.com/<your-username>/claude-skill.git ~/code/claude-skil
 
 ### Step 2 — Install the skill
 
-You have two options. Pick one.
+The recommended path is the install script. It handles dest creation, idempotent re-runs, atomic dest swap, and refuses to write under unsafe paths.
 
-#### Option A — Copy (recommended for end-users)
+```bash
+cd ~/code/claude-skill
+./scripts/install.sh                # copy mode (default; safe for end-users)
+./scripts/install.sh --symlink      # symlink mode (recommended for skill developers)
+./scripts/install.sh --force        # overwrite an existing install
+./scripts/install.sh --dest /custom # custom skills root
+```
+
+A symlink lets you `git pull` upstream improvements without re-installing.
+
+If you'd rather do it by hand:
 
 ```bash
 mkdir -p ~/.claude/skills
-cp -r ~/code/claude-skill/super-coder ~/.claude/skills/
+cp -r ~/code/claude-skill/super-coder ~/.claude/skills/         # copy mode
+# or:
+ln -s ~/code/claude-skill/super-coder ~/.claude/skills/super-coder  # symlink mode
 ```
-
-#### Option B — Symlink (recommended for skill developers)
-
-```bash
-mkdir -p ~/.claude/skills
-ln -s ~/code/claude-skill/super-coder ~/.claude/skills/super-coder
-```
-
-A symlink lets you `git pull` upstream improvements without re-copying.
 
 ### Step 3 — Verify
 
@@ -172,16 +175,22 @@ If you cloned to `~/code/claude-skill`:
 
 ```bash
 cd ~/code/claude-skill && git pull
-# if you used Option A (copy):
-cp -r ~/code/claude-skill/super-coder ~/.claude/skills/
-# if you used Option B (symlink): nothing — symlink picks up the change automatically
+./scripts/install.sh --force        # re-runs install (no-op for symlink mode)
 ```
+
+If you installed by hand: `cp -r` again for copy mode; nothing for symlink mode.
 
 ### Uninstalling
 
 ```bash
-rm -rf ~/.claude/skills/super-coder
+cd ~/code/claude-skill
+./scripts/uninstall.sh              # removes ~/.claude/skills/super-coder
+./scripts/uninstall.sh --dry-run    # show what would be removed without removing
 ```
+
+For symlink installs, `uninstall.sh` removes the link only — your repo clone is untouched.
+
+Or by hand: `rm -rf ~/.claude/skills/super-coder`.
 
 ---
 
