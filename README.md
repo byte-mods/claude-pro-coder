@@ -66,7 +66,7 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 | **Persistent code-map** | Per-area Markdown notes under `<project>/.claude/state/code-map/` capturing API shapes, invariants, callers, gotchas with `file:line` anchors. Survives across sessions; reconciled at every section close. | `<project>/.claude/state/code-map/*.md` |
 | **Section snapshots** | At each section boundary (5+ tasks or explicit `section boundary` keyword), the agent writes a structured snapshot of verified facts, open invariants, and the next-section blast radius — then stops. The next session resumes from the snapshot, not from a stale conversation tail. | `<project>/.claude/state/current_section.md` |
 | **CLAUDE.md proposal queue** | The agent never writes to `CLAUDE.md`. Suggested project-contract additions are appended (with file:line justification + confidence) to `<project>/.claude/state/claude_md_proposals.md` for your review. | `<project>/.claude/state/claude_md_proposals.md` |
-| **Auto-fallback** | If lens isn't on `$PATH` or the project has no supported language files (lens supports Rust, Python, TypeScript, JavaScript, Go), the skill detects this once at bootstrap and swaps `lens query`/`lens follow` for `Read`/`Grep`/`Glob`. The loop still runs end-to-end. | bootstrap step 5 in `SKILL.md` |
+| **Auto-fallback** | If lens isn't on `$PATH` or the project has no supported language files (lens supports Rust, Python, TypeScript, JavaScript, Go, Dart), the skill detects this once at bootstrap and swaps `lens query`/`lens follow` for `Read`/`Grep`/`Glob`. The loop still runs end-to-end. | bootstrap step 5 in `SKILL.md` |
 | **Token meter** | `lens meter` keeps a persistent input/output token tally across `/clear`s and sessions. `--diff` since last call, `--since 1h`, `--json` for scripts. | lens binary |
 | **Idempotent install + atomic file ops** | `install.sh` re-runs are no-ops when source matches dest (SKILL.md byte-equality + lens source-hash). Copy mode stages into a sibling tmp dir then `mv` (same-FS atomic). Symlink mode replaces real dirs explicitly. Uninstall reaps orphan staging dirs from interrupted prior installs. | `scripts/install.sh`, `scripts/uninstall.sh`, `scripts/_lib.sh` |
 | **Safe-dest guard** | All destructive operations refuse to run on `/`, `$HOME`, or any system path (`/etc`, `/var`, `/usr`, `/private`, `/Applications`, `/Network`, `/Volumes`, `/System`, `/Library`, `/opt`, `/boot`, `/dev`, `/proc`, `/sys`, `/bin`, `/sbin`, `/home`, `/root`, `/srv`, `/run`, `/lib`, `/lib64`, `/mnt`, `/media`). Paths are canonicalised first — `..`-traversal bypasses (e.g. `--dest ~/skills/../../../etc`) trip the guard. | `scripts/_lib.sh` |
@@ -87,7 +87,7 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 
 **If `python3` is missing:** `install-mcp.sh` prints the JSON snippet you need to add to `~/.claude.json` manually and exits 1. Skill + lens still install; only the MCP wire-up is skipped. Lens still works via the Bash CLI in that case — you just lose the structured-tool path.
 
-**Lens language scope (today):** Rust, Python, TypeScript (`.ts`/`.tsx`), JavaScript (`.js`/`.jsx`/`.mjs`/`.cjs`), Go (`.go`). On unsupported codebases, `lens index` produces an empty index and the skill auto-falls back per project. More languages are upstream work in [`lens`](https://github.com/sudeep-dasgupta/lens).
+**Lens language scope (today):** Rust, Python, TypeScript (`.ts`/`.tsx`), JavaScript (`.js`/`.jsx`/`.mjs`/`.cjs`), Go (`.go`), Dart (`.dart`). On unsupported codebases, `lens index` produces an empty index and the skill auto-falls back per project. More languages are upstream work in [`lens`](https://github.com/sudeep-dasgupta/lens).
 
 ---
 
@@ -181,7 +181,7 @@ lens --version
 # if "command not found": ~/.claude/bin isn't on PATH (see Step 3 above) — that's fine,
 # Claude Code still calls lens by absolute path via the MCP entry in ~/.claude.json
 
-# 3. Smoke-test lens on a supported-language project (Rust, Python, TS/JS, Go)
+# 3. Smoke-test lens on a supported-language project (Rust, Python, TS/JS, Go, Dart)
 cd ~/some-project
 lens init
 lens index
@@ -735,7 +735,7 @@ The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `
 - Restart Claude Code — MCP servers are spawned at startup, not hot-reloaded.
 
 **Lens reports `0 symbols` indexed.**
-- This is expected for non-Rust/Python/TypeScript/JavaScript/Go codebases. The skill detects it at bootstrap and falls back to `Read`/`Grep`/`Glob` for the rest of the session.
+- This is expected for non-Rust/Python/TypeScript/JavaScript/Go/Dart codebases. The skill detects it at bootstrap and falls back to `Read`/`Grep`/`Glob` for the rest of the session.
 - If your project IS in a supported language and you still see 0 symbols, run `lens index` manually and check `.lens/index.db` exists. File an issue at the [lens repo](https://github.com/sudeep-dasgupta/lens) with the project structure.
 
 **Install script refuses to run with "refusing to operate on system path".**
@@ -771,7 +771,7 @@ After editing, re-run `./scripts/install.sh --force` (or `git pull && ./scripts/
 ## FAQ
 
 **Q: Does this work without `lens`?**
-Yes, in fallback mode. SKILL.md detects whether `lens` is on `$PATH` (and whether `lens index` produced any symbols) once per project at bootstrap. If lens is absent or the project has 0 symbols indexed (lens supports Rust, Python, TypeScript, JavaScript, and Go today), the skill swaps `lens query`/`lens follow` for `Read`/`Grep`/`Glob` automatically. The loop still runs end-to-end; the difference is per-call token cost — lens slices are budget-capped (`--budget 1500` returns ~1500 tokens), `Read`/`Grep` on a large file isn't.
+Yes, in fallback mode. SKILL.md detects whether `lens` is on `$PATH` (and whether `lens index` produced any symbols) once per project at bootstrap. If lens is absent or the project has 0 symbols indexed (lens supports Rust, Python, TypeScript, JavaScript, Go, and Dart today), the skill swaps `lens query`/`lens follow` for `Read`/`Grep`/`Glob` automatically. The loop still runs end-to-end; the difference is per-call token cost — lens slices are budget-capped (`--budget 1500` returns ~1500 tokens), `Read`/`Grep` on a large file isn't.
 
 **Q: What does lens actually buy me?**
 Symbol-aware, budget-capped slices. `lens follow some_function --budget 1500` returns the definition + signature + body + caller list in ~1500 tokens, regardless of how big the file is. `lens query "auth middleware" --budget 2000` returns the symbol-graph seeds for that topic with `file:line` anchors. By contrast, `Read` on a 2000-line file returns ~50k tokens and `Grep` returns line matches without structural context. Token savings compound across the per-task and section-level super-qa loops, where the same blast radius gets re-traversed multiple times.

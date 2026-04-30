@@ -7,7 +7,7 @@ const DEFAULT_CONFIG: &str = "\
 # Lens project config — edit to suit your repo.
 
 [index]
-languages = [\"rust\", \"python\", \"typescript\", \"javascript\", \"go\", \"java\"]
+languages = [\"rust\", \"python\", \"typescript\", \"javascript\", \"go\", \"dart\", \"java\"]
 
 [slice]
 default_budget = 2000

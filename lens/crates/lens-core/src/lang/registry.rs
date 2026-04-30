@@ -33,6 +33,7 @@ impl Registry {
         //   30%-coverage    — JavaScript (.js)    ✓
         //   30%-coverage    — JavaScript (.jsx)   ✓
         //   30%-coverage    — Go         (.go)    ✓
+        //   30%-coverage    — Dart       (.dart)  ✓
         let mut r = Self::empty();
         r.register(Arc::new(super::rust::RustExtractor));
         r.register(Arc::new(super::python::PythonExtractor));
@@ -41,6 +42,7 @@ impl Registry {
         r.register(Arc::new(super::javascript::JavaScriptExtractor::js()));
         r.register(Arc::new(super::javascript::JavaScriptExtractor::jsx()));
         r.register(Arc::new(super::go::GoExtractor::new()));
+        r.register(Arc::new(super::dart::DartExtractor::new()));
         r
     }
 
@@ -173,10 +175,11 @@ mod tests {
     fn test_lang_registry_with_default_languages_lists_all_languages_sorted() {
         let r = Registry::with_default_languages();
         // `supported_languages` sorts by `as_str()` — alphabetical:
-        // "go" < "javascript" < "python" < "rust" < "typescript".
+        // "dart" < "go" < "javascript" < "python" < "rust" < "typescript".
         assert_eq!(
             r.supported_languages(),
             vec![
+                LanguageId::Dart,
                 LanguageId::Go,
                 LanguageId::JavaScript,
                 LanguageId::Python,

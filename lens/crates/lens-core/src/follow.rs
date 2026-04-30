@@ -38,7 +38,7 @@ pub struct FollowResult {
     /// `None` when no doc was attached at the declaration.
     pub doc_comment: Option<String>,
     /// Language of the source file ("rust" / "python" / "typescript" /
-    /// "javascript" / "go"). Used to surface cross-language matches —
+    /// "javascript" / "go" / "dart"). Used to surface cross-language matches —
     /// e.g. when `lens follow Foo` resolves to a Python class because the
     /// caller-context Rust type was missing.
     pub language: String,

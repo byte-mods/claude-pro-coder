@@ -106,6 +106,20 @@ may break compatibility on minor bumps.
   directory with a `SKILL.md` and appending its name to the array — no
   script refactoring needed.
 
+- **Dart language support in lens.** Added `DartExtractor` implementing the
+  `LanguageExtractor` trait over `tree-sitter-dart`. Extracts top-level
+  functions, classes, methods, getters, setters, constructors (including
+  factory, const, and named constructors), mixins, enums with constants,
+  extensions, extension types, type aliases (typedefs), imports/exports,
+  and type references. Doc comments (`///`, `/** */`) are harvested at
+  index time and surfaced by `lens follow`.
+- **Dart call-site extraction.** The `DartExtractor` now walks function and
+  constructor bodies for call expressions — bare calls (`greet()`), method
+  chains (`obj.method()`, `a.b.c()`), `new` expressions (`new Point()`),
+  and cascade notation (`obj..a()..b()`). Each call is attributed to its
+  enclosing function or method qualified name, enabling `lens refs` impact
+  analysis for Dart codebases.
+
 ### Changed
 - **SKILL.md: mandatory code commenting after QA PASS.** P4 task flow now
   includes step 6 — comment every function, method, struct, module, and

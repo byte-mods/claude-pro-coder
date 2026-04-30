@@ -307,7 +307,7 @@ pub struct SymbolMeta {
     pub file_path: String,
     pub start_line: i64,
     /// Language of the symbol's source file (matches `LanguageId::as_str()`):
-    /// "rust", "python", "typescript", "javascript", "go". Used to surface
+    /// "rust", "python", "typescript", "javascript", "go", "dart". Used to surface
     /// cross-language matches in disambiguation messages so Claude can tell
     /// when `Foo` resolved to a Python class vs a Rust struct.
     pub language: String,

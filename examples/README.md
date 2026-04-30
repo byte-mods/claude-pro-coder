@@ -37,5 +37,5 @@ The prompts assume:
 
 If your project is in a language lens does not index (currently:
 languages outside Rust, Python, TypeScript/TSX, JavaScript/JSX, MJS,
-CJS, and Go), the skill auto-detects and uses fallback mode. The
+CJS, Go, and Dart), the skill auto-detects and uses fallback mode. The
 examples still apply; the prompts don't change.

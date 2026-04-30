@@ -4,6 +4,7 @@
 //! implemented by a type implementing [`LanguageExtractor`]. The [`Registry`]
 //! resolves an extension or `LanguageId` to the matching extractor.
 
+pub mod dart;
 pub mod go;
 pub mod javascript;
 pub mod python;
@@ -13,6 +14,7 @@ pub mod typescript;
 
 use std::fmt;
 
+pub use dart::DartExtractor;
 pub use go::GoExtractor;
 pub use javascript::JavaScriptExtractor;
 pub use python::PythonExtractor;
@@ -30,6 +32,7 @@ pub enum LanguageId {
     TypeScript,
     JavaScript,
     Go,
+    Dart,
 }
 
 impl LanguageId {
@@ -40,6 +43,7 @@ impl LanguageId {
             LanguageId::TypeScript => "typescript",
             LanguageId::JavaScript => "javascript",
             LanguageId::Go => "go",
+            LanguageId::Dart => "dart",
         }
     }
 
@@ -50,6 +54,7 @@ impl LanguageId {
             LanguageId::TypeScript,
             LanguageId::JavaScript,
             LanguageId::Go,
+            LanguageId::Dart,
         ]
     }
 
@@ -60,6 +65,7 @@ impl LanguageId {
             "typescript" => Some(LanguageId::TypeScript),
             "javascript" => Some(LanguageId::JavaScript),
             "go" => Some(LanguageId::Go),
+            "dart" => Some(LanguageId::Dart),
             _ => None,
         }
     }
