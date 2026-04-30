@@ -1,5 +1,21 @@
 # CLAUDE.md Proposal Queue
 
+**STATUS — 2026-04-30 (end of section 7 of the lens project):** All 4
+proposals below have been accepted and integrated into the lens repo's
+`~/projects/lens/CLAUDE.md` as of section 7. Specifically:
+- "Schema discipline" → `## Schema discipline` in lens CLAUDE.md
+- "Public API discipline (lens-core)" → `## Public API discipline (lens-core)`
+- "CLI contract" → `## CLI contract`
+- "Extraction discipline + Qualified-name conventions" → split into
+  `## Per-language extractors` and `## Qualified-name conventions`
+
+The entries are retained below as a historical record. The lens repo
+also has its own queue (`~/projects/lens/.claude/state/claude_md_proposals.md`)
+which holds the section 2 part 2 / section 4 proposals that were
+likewise integrated.
+
+---
+
 _Pending review by user. Accepted entries to be copied into `CLAUDE.md` by hand._
 
 _Note: these proposals target a future `/Users/sudeepdasgupta/projects/lens/CLAUDE.md` (the lens repo's contract), not the claude-skill repo's CLAUDE.md. Lens does not yet have a CLAUDE.md; the user can create one when convenient._
