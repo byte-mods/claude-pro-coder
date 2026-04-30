@@ -95,6 +95,8 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-01
+
 ### Added
 - **`/diagram` skill** — generates visual Mermaid architecture flowcharts of
   the current codebase. Uses lens (`lens map`, `lens query`, `lens follow`,
@@ -128,6 +130,9 @@ may break compatibility on minor bumps.
   this. Comments use the language's native doc format so `lens follow`
   surfaces them; well-commented code lets future AI sessions skip reading
   function bodies.
+- **README Dart coverage.** Doc-comment extraction now lists Dart alongside
+  Rust (`///` / `/** */`). FAQ answer updated to include Dart. `--version`
+  verify step no longer hardcodes `0.1.0` — references `lens/Cargo.toml:9`.
 
 ## [0.1.0] - 2026-04-29
 
@@ -216,6 +221,7 @@ Initial public release.
 - `--dry-run` on `install.sh` skips the cargo build entirely rather
   than running it in a no-write mode (cargo offers no such mode).
 
-[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sudeep-dasgupta/claude-skill/releases/tag/v0.1.0

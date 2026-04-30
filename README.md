@@ -177,7 +177,7 @@ ls ~/.claude/skills/pro-coder/ ~/.claude/skills/diagram/
 
 # 2. Lens binary works (only if you installed lens)
 lens --version
-# expected output: lens 0.1.0 (matches lens/Cargo.toml workspace version)
+# expected output: lens <version> (should match the workspace version at lens/Cargo.toml:9)
 # if "command not found": ~/.claude/bin isn't on PATH (see Step 3 above) — that's fine,
 # Claude Code still calls lens by absolute path via the MCP entry in ~/.claude.json
 
@@ -516,7 +516,7 @@ lens mcp                                                # run as a stdio MCP ser
 
 The win versus `Read` + `Grep`: `lens follow some_function --budget 1500` returns ~1500 tokens regardless of how big the source file is. `Read` on a 2000-line file returns ~50k tokens. Across the per-task super-qa loops (which re-traverse the blast radius repeatedly), the savings compound.
 
-**Doc comments come first.** Per-language extractors harvest `///` (Rust), docstrings (Python), JSDoc / `//` (TS/JS), and `//` (Go) at index time. `lens follow` surfaces them as a `> blockquote` ahead of signature and body — for well-documented code Claude often doesn't need the body at all.
+**Doc comments come first.** Per-language extractors harvest `///` / `/** */` (Rust, Dart), docstrings (Python), JSDoc (TS/JS), and `//` (Go) at index time. `lens follow` surfaces them as a `> blockquote` ahead of signature and body — for well-documented code Claude often doesn't need the body at all.
 
 **Cross-language disambiguation.** When `lens follow Foo` matches symbols in multiple languages, the ambiguity message tags each candidate with its language and explicitly flags "cross-language: rust, python, go". The resolved follow output also names the language so Claude knows which language slice it received. Use `--from FILE:LINE` to disambiguate.
 
@@ -798,7 +798,7 @@ The Agent tool surfaces the subagent's report inline. Super-coder also records t
 `./scripts/uninstall.sh --keep-mcp --dest /dev/null` won't work (the safe-dest guard forbids it). Instead, remove just the binary manually: `rm ~/.claude/bin/lens ~/.claude/bin/.lens.installed.sha`, then `./scripts/install-mcp.sh --remove` to clean up the now-broken MCP entry. The skill stays installed and detects the missing lens at next invocation, falling back automatically.
 
 **Q: Can I use this on a TypeScript / Go / C++ project?**
-Yes for TypeScript and Go (lens indexes both). For other languages (Java, C++, Ruby, etc.) the skill detects the empty index at bootstrap and switches to fallback mode (`Read` / `Grep` / `Glob`). The loop still runs — you just lose the token-efficient retrieval. More languages are tracked at the [lens repo](https://github.com/sudeep-dasgupta/lens).
+Yes for TypeScript, Go, and Dart (lens indexes all three). For other languages (Java, C++, Ruby, etc.) the skill detects the empty index at bootstrap and switches to fallback mode (`Read` / `Grep` / `Glob`). The loop still runs — you just lose the token-efficient retrieval. More languages are tracked at the [lens repo](https://github.com/sudeep-dasgupta/lens).
 
 **Q: Where do I look if something seems off?**
 - `<project>/.claude/state/current_section.md` — what the agent thinks it just did.
