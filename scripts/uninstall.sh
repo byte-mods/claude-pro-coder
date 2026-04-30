@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uninstall the pro-coder skill from ~/.claude/skills/pro-coder.
+# Uninstall the shipped skills (pro-coder, diagram) from ~/.claude/skills/.
 # Also removes the bundled `lens` binary at ~/.claude/bin/lens (and its
 # install marker) and the `mcpServers.lens` entry from ~/.claude.json by
 # default. Pass --keep-lens to leave the binary in place; --keep-mcp to leave
@@ -106,83 +106,87 @@ if [[ "${strict}" == 1 ]]; then
   sc_assert_strict_allowed "${claude_json}"  "${HOME}" "uninstall.sh" || exit 1
 fi
 
-dest="${dest_root}/pro-coder"
-
-# Defence-in-depth: even if dest_root passed the guard, refuse to remove a path
-# whose final segment isn't `pro-coder`. Closes a typo-injection style foot-gun
-# (e.g. a future caller passing dest_root=/Users/me/important by mistake — the
-# concatenation only ever appends /pro-coder so this is mostly a sanity check).
-case "${dest}" in
-  */pro-coder ) ;;
-  * )
-    echo "uninstall.sh: computed dest '${dest}' does not end in /pro-coder. Refusing." >&2
-    exit 1 ;;
-esac
+# Skills shipped in this repo. Must match the list in install.sh.
+skill_names=("pro-coder" "diagram")
 
 # Reap orphan staging directories from interrupted prior installs. install.sh's
-# copy mode stages into `${dest_root}/.pro-coder.staging.XXXXXX` (mktemp's
+# copy mode stages into `${dest_root}/.<skill>.staging.XXXXXX` (mktemp's
 # 6-char alphanum pattern) and an EXIT trap removes it on graceful exit. A
 # SIGKILL'd install leaves the staging dir behind — dead weight that clutters
-# the skills root. Reap them here, with the same defence-in-depth tail check
-# we applied to the main dest.
+# the skills root. Reap them here.
 #
-# Runs BEFORE the early-no-op return below so orphans are cleaned up even when
+# Runs BEFORE the per-skill removal so orphans are cleaned up even when
 # no current install exists at ${dest}.
 orphans_reaped=0
 if [[ -d "${dest_root}" ]]; then
-  while IFS= read -r staging; do
-    [[ -z "${staging}" ]] && continue
-    case "${staging}" in
-      */.pro-coder.staging.* ) ;;
-      * ) continue ;;  # defence-in-depth — must match the staging prefix
-    esac
-    if [[ "${dry_run}" == 1 ]]; then
-      log "uninstall.sh: --dry-run: would reap orphan staging dir ${staging}"
-    else
-      log "uninstall.sh: reaping orphan staging dir ${staging}"
-      rm -rf "${staging}"
-    fi
-    orphans_reaped=$((orphans_reaped + 1))
-  done < <(find "${dest_root}" -maxdepth 1 -type d -name '.pro-coder.staging.*' 2>/dev/null)
+  for skill_name in "${skill_names[@]}"; do
+    while IFS= read -r staging; do
+      [[ -z "${staging}" ]] && continue
+      case "${staging}" in
+        */.${skill_name}.staging.* ) ;;
+        * ) continue ;;  # defence-in-depth — must match the staging prefix
+      esac
+      if [[ "${dry_run}" == 1 ]]; then
+        log "uninstall.sh: --dry-run: would reap orphan staging dir ${staging}"
+      else
+        log "uninstall.sh: reaping orphan staging dir ${staging}"
+        rm -rf "${staging}"
+      fi
+      orphans_reaped=$((orphans_reaped + 1))
+    done < <(find "${dest_root}" -maxdepth 1 -type d -name ".${skill_name}.staging.*" 2>/dev/null)
+  done
 fi
 
-# Nothing to do at the main dest? The reap above may still have done useful
-# work — if so, surface that instead of falsely claiming "already uninstalled".
-if [[ ! -e "${dest}" ]] && [[ ! -L "${dest}" ]]; then
-  if [[ "${orphans_reaped}" -gt 0 ]]; then
-    log "uninstall.sh: reaped ${orphans_reaped} orphan staging dir(s); nothing else at ${dest}."
+# Remove each skill. Same logic as install.sh — loop over the skill list.
+any_found=0
+for skill_name in "${skill_names[@]}"; do
+  dest="${dest_root}/${skill_name}"
+
+  case "${dest}" in
+    */${skill_name} ) ;;
+    * )
+      echo "uninstall.sh: computed dest '${dest}' does not end in /${skill_name}. Refusing." >&2
+      exit 1 ;;
+  esac
+
+  if [[ ! -e "${dest}" ]] && [[ ! -L "${dest}" ]]; then
+    continue
+  fi
+  any_found=1
+
+  # What kind of thing are we removing?
+  if [[ -L "${dest}" ]]; then
+    target="$(readlink "${dest}")"
+    log "uninstall.sh: removing symlink ${dest} -> ${target}"
+  elif [[ -d "${dest}" ]]; then
+    log "uninstall.sh: removing directory ${dest}"
   else
-    log "uninstall.sh: nothing to remove at ${dest}. (Already uninstalled.)"
+    log "uninstall.sh: removing ${dest}"
+  fi
+
+  if [[ "${dry_run}" == 1 ]]; then
+    continue
+  fi
+
+  rm -rf "${dest}"
+
+  if [[ -e "${dest}" || -L "${dest}" ]]; then
+    echo "uninstall.sh: ${dest} still exists after rm. Investigate." >&2
+    exit 1
+  fi
+
+  log "uninstall.sh: removed ${dest}."
+done
+
+# Nothing to do? The reap above may still have done useful work.
+if [[ "${any_found}" == 0 ]]; then
+  if [[ "${orphans_reaped}" -gt 0 ]]; then
+    log "uninstall.sh: reaped ${orphans_reaped} orphan staging dir(s); nothing else to remove."
+  else
+    log "uninstall.sh: nothing to remove. (Already uninstalled.)"
   fi
   exit 0
 fi
-
-# What kind of thing are we removing? Surface it so the user sees what's about
-# to disappear.
-if [[ -L "${dest}" ]]; then
-  target="$(readlink "${dest}")"
-  log "uninstall.sh: removing symlink ${dest} -> ${target}"
-elif [[ -d "${dest}" ]]; then
-  log "uninstall.sh: removing directory ${dest}"
-else
-  log "uninstall.sh: removing ${dest}"
-fi
-
-if [[ "${dry_run}" == 1 ]]; then
-  log "uninstall.sh: --dry-run: no changes made."
-  exit 0
-fi
-
-# `rm -rf` on a symlink removes the link, not the target. On a directory it
-# recursively removes contents. Both branches converge to "dest no longer exists".
-rm -rf "${dest}"
-
-if [[ -e "${dest}" || -L "${dest}" ]]; then
-  echo "uninstall.sh: ${dest} still exists after rm. Investigate." >&2
-  exit 1
-fi
-
-log "uninstall.sh: removed ${dest}."
 
 # Lens binary cleanup. Defaults to removing; --keep-lens leaves it in place
 # (useful when the user has other tooling that depends on lens being on PATH).

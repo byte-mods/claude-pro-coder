@@ -95,6 +95,17 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+### Added
+- **`/diagram` skill** — generates visual Mermaid architecture flowcharts of
+  the current codebase. Uses lens (`lens map`, `lens query`, `lens follow`,
+  `lens refs`, `lens path`) for symbol-aware structural analysis; falls back
+  to filesystem tools when lens is unavailable. Writes `ARCHITECTURE.md` at
+  the project root, viewable in GitHub, VS Code, or any Mermaid renderer.
+- `install.sh` and `uninstall.sh` now handle multiple skills via a loop over
+  a `skill_names` array. Adding a new skill requires only creating its
+  directory with a `SKILL.md` and appending its name to the array — no
+  script refactoring needed.
+
 ### Changed
 - **SKILL.md: mandatory code commenting after QA PASS.** P4 task flow now
   includes step 6 — comment every function, method, struct, module, and

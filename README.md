@@ -20,11 +20,11 @@ cd ~/code/claude-skill
 
 The script installs three things:
 
-1. The skill at `~/.claude/skills/pro-coder/SKILL.md` — Claude Code auto-discovers it.
+1. The skills at `~/.claude/skills/pro-coder/SKILL.md` and `~/.claude/skills/diagram/SKILL.md` — Claude Code auto-discovers them.
 2. The bundled `lens` binary at `~/.claude/bin/lens` (built from `lens/` via `cargo build --release`, ~30s first run, cached after).
 3. An `mcpServers.lens` entry in `~/.claude.json` — Claude Code spawns lens at startup as a structured-tool server.
 
-Open Claude Code in any project and type `/pro-coder` followed by your engineering objective.
+Open Claude Code in any project and type `/pro-coder` (engineering tasks) or `/diagram` (architecture visualizations).
 
 If you don't have Rust, the install still works — the skill auto-detects the missing binary and falls back to `Read`/`Grep`/`Glob`. See [Prerequisites](#prerequisites).
 
@@ -60,6 +60,7 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 |---|---|---|
 | **Two-agent QA loop** | An adversarial **super-qa** subagent gates every task and every section. Read-only, structured verdicts, unbounded loop with stuck-loop detection. PASS requires zero `BLOCKER` and zero `MAJOR` defects. | `pro-coder/SKILL.md` (P4.5, P5) |
 | **6-phase workflow** | Comprehend → Research → Plan → Implement+Test → Audit → Section Boundary. Active phase declared on every response. | `pro-coder/SKILL.md` |
+| **Architecture diagrams** | Generate visual Mermaid flowcharts of the codebase using lens for symbol-aware analysis. Outputs `ARCHITECTURE.md` at the project root — viewable in GitHub, VS Code, any Mermaid renderer. | `diagram/SKILL.md` |
 | **Symbol-aware retrieval (lens)** | Budget-capped `lens follow`, `lens query`, `lens refs`, `lens slice`, `lens explain`, `lens path`, `lens map`. ~1500 tokens for a function definition + signature + body + callers regardless of file size. | `lens/` crate, `~/.claude/bin/lens` |
 | **MCP-native tool surface** | Lens runs as an MCP stdio server (`lens mcp`) auto-wired into `~/.claude.json`. Claude calls `lens_follow`, `lens_refs`, `lens_query`, `lens_explain`, `lens_path`, `lens_slice`, `lens_map` as structured tools — no Bash boilerplate, no string-parsing of stdout. | `scripts/install-mcp.sh`, `~/.claude.json` |
 | **Persistent code-map** | Per-area Markdown notes under `<project>/.claude/state/code-map/` capturing API shapes, invariants, callers, gotchas with `file:line` anchors. Survives across sessions; reconciled at every section close. | `<project>/.claude/state/code-map/*.md` |
@@ -170,9 +171,9 @@ chmod +x ~/.claude/bin/lens
 ## Verify
 
 ```bash
-# 1. Skill is installed
-ls ~/.claude/skills/pro-coder/
-# expected output: SKILL.md
+# 1. Skills are installed
+ls ~/.claude/skills/pro-coder/ ~/.claude/skills/diagram/
+# expected output: SKILL.md (in each directory)
 
 # 2. Lens binary works (only if you installed lens)
 lens --version
@@ -352,7 +353,8 @@ Code-map and agent memory are the two long-lived layers. **Code-map** holds anyt
 
 | Command | Purpose |
 |---|---|
-| `/pro-coder <goal>` | Invoke the skill. Goal is one or two lines; constraints/perf budgets/deadlines optional but useful. |
+| `/pro-coder <goal>` | Invoke the engineering skill. Goal is one or two lines; constraints/perf budgets/deadlines optional but useful. |
+| `/diagram` | Generate a visual Mermaid architecture flowchart of the current project. Uses lens for symbol-aware analysis; writes `ARCHITECTURE.md` at the project root. |
 | `section boundary` | Force a P6 reset at any point. The skill snapshots state, appends any CLAUDE.md proposals, and stops. |
 | `reset` | Synonym for `section boundary`. |
 

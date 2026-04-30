@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the pro-coder skill into ~/.claude/skills/pro-coder.
+# Install the shipped skills (pro-coder, diagram) into ~/.claude/skills/.
 #
 # By default, also (a) builds the bundled `lens` binary under ~/.claude/bin and
 # (b) registers it as an MCP server in ~/.claude.json so Claude Code calls
@@ -118,18 +118,26 @@ sc_assert_not_root "${EUID}" "${allow_root}" "install.sh" || exit 1
 # without the default biasing the check.
 [[ -z "${mode}" ]] && mode="copy"
 
-# Resolve the source skill directory relative to this script — works whether the
-# user runs `scripts/install.sh` from the repo root or from inside scripts/.
+# Resolve the repo root relative to this script — works whether the user runs
+# `scripts/install.sh` from the repo root or from inside scripts/.
 # Reuse _sc_script_dir from the source-block above (already absolute, BASH_SOURCE-based).
 script_dir="${_sc_script_dir}"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-src="${repo_root}/pro-coder"
 
-if [[ ! -f "${src}/SKILL.md" ]]; then
-  echo "install.sh: cannot find SKILL.md at ${src}/SKILL.md" >&2
-  echo "install.sh: this script must live at <repo>/scripts/install.sh" >&2
-  exit 1
-fi
+# Skills shipped in this repo. Each entry names a directory under the repo root
+# that contains a SKILL.md file. Add new skills here; the install loop handles
+# the rest.
+skill_names=("pro-coder" "diagram")
+
+# Validate all skill sources exist before touching the filesystem.
+for skill_name in "${skill_names[@]}"; do
+  src="${repo_root}/${skill_name}"
+  if [[ ! -f "${src}/SKILL.md" ]]; then
+    echo "install.sh: cannot find SKILL.md at ${src}/SKILL.md" >&2
+    echo "install.sh: this script must live at <repo>/scripts/install.sh" >&2
+    exit 1
+  fi
+done
 
 # Unsafe-destination guard — implementation lives in scripts/_lib.sh so install.sh
 # and uninstall.sh share one list. Refuses empty / "/", $HOME directly, and any
@@ -146,92 +154,93 @@ if [[ "${strict}" == 1 ]]; then
   sc_assert_strict_allowed "${claude_json}"  "${HOME}" "install.sh" || exit 1
 fi
 
-dest="${dest_root}/pro-coder"
-
 if [[ "${dry_run}" == 1 ]]; then
   log "install.sh: --dry-run: would mkdir -p ${dest_root}"
 else
   mkdir -p "${dest_root}"
 fi
 
-# Idempotency: if dest already matches what we'd install, exit 0 quietly.
-already_correct=0
-if [[ "${mode}" == "symlink" ]] && [[ -L "${dest}" ]]; then
-  current_target="$(readlink "${dest}")"
-  if [[ "${current_target}" == "${src}" ]]; then
-    already_correct=1
-  fi
-elif [[ "${mode}" == "copy" ]] && [[ -d "${dest}" ]] && [[ ! -L "${dest}" ]] && [[ -f "${dest}/SKILL.md" ]]; then
-  if cmp -s "${src}/SKILL.md" "${dest}/SKILL.md"; then
-    already_correct=1
-  fi
-fi
+# Install each skill. Same logic for all: idempotency check, copy or symlink,
+# verify. The loop runs per-skill so a missing source for one skill doesn't
+# affect the others (sources already validated above).
+for skill_name in "${skill_names[@]}"; do
+  src="${repo_root}/${skill_name}"
+  dest="${dest_root}/${skill_name}"
+  staging_prefix=".${skill_name}.staging"
 
-if [[ "${already_correct}" == 1 ]]; then
-  log "install.sh: ${dest} already up-to-date (mode=${mode}). Skipping skill copy."
-  # Do not exit yet — fall through to the lens build so an unchanged skill +
-  # changed lens source still triggers a rebuild. install-lens.sh has its own
-  # idempotency guard (source-hash marker), so this remains a no-op when
-  # nothing has changed on either side.
-fi
-
-# Existing destination handling. We use atomic rename for copy mode and ln -sfn for
-# symlink mode so the destination swap is not interruptible — closes the TOCTOU
-# window between rm and cp/ln.
-if [[ "${already_correct}" != 1 ]] && { [[ -e "${dest}" ]] || [[ -L "${dest}" ]]; }; then
-  if [[ "${force}" != 1 ]]; then
-    echo "install.sh: ${dest} already exists. Re-run with --force to overwrite." >&2
-    exit 1
+  # Idempotency: if dest already matches what we'd install, skip this skill.
+  already_correct=0
+  if [[ "${mode}" == "symlink" ]] && [[ -L "${dest}" ]]; then
+    current_target="$(readlink "${dest}")"
+    if [[ "${current_target}" == "${src}" ]]; then
+      already_correct=1
+    fi
+  elif [[ "${mode}" == "copy" ]] && [[ -d "${dest}" ]] && [[ ! -L "${dest}" ]] && [[ -f "${dest}/SKILL.md" ]]; then
+    if cmp -s "${src}/SKILL.md" "${dest}/SKILL.md"; then
+      already_correct=1
+    fi
   fi
-fi
 
-if [[ "${already_correct}" == 1 ]]; then
-  : # Skip the copy/link block — destination already matches source.
-elif [[ "${dry_run}" == 1 ]]; then
-  if [[ "${mode}" == "symlink" ]]; then
-    log "install.sh: --dry-run: would symlink ${dest} -> ${src}"
+  if [[ "${already_correct}" == 1 ]]; then
+    log "install.sh: ${dest} already up-to-date (mode=${mode}). Skipping skill copy."
+    continue
+  fi
+
+  # Existing destination handling. We use atomic rename for copy mode and ln -sfn
+  # for symlink mode so the destination swap is not interruptible — closes the
+  # TOCTOU window between rm and cp/ln.
+  if [[ -e "${dest}" ]] || [[ -L "${dest}" ]]; then
+    if [[ "${force}" != 1 ]]; then
+      echo "install.sh: ${dest} already exists. Re-run with --force to overwrite." >&2
+      exit 1
+    fi
+  fi
+
+  if [[ "${dry_run}" == 1 ]]; then
+    if [[ "${mode}" == "symlink" ]]; then
+      log "install.sh: --dry-run: would symlink ${dest} -> ${src}"
+    else
+      log "install.sh: --dry-run: would copy ${src} -> ${dest} (atomic rename via staging dir)"
+    fi
+  elif [[ "${mode}" == "symlink" ]]; then
+    # ln -sfn replaces an existing symlink atomically, but it does NOT replace a
+    # real directory — it would create the link inside the dir. Remove first.
+    if [[ -d "${dest}" ]] && [[ ! -L "${dest}" ]]; then
+      rm -rf "${dest}"
+    fi
+    ln -sfn "${src}" "${dest}"
+    # Verify dest is now a symlink pointing where we expect — defends against
+    # the silent "link landed inside an existing dir" mode.
+    if [[ ! -L "${dest}" ]] || [[ "$(readlink "${dest}")" != "${src}" ]]; then
+      echo "install.sh: symlink at ${dest} did not land correctly. Investigate." >&2
+      exit 1
+    fi
+    log "install.sh: symlinked ${dest} -> ${src}"
   else
-    log "install.sh: --dry-run: would copy ${src} -> ${dest} (atomic rename via staging dir)"
+    # Stage into a sibling tmp dir, then rename. mv on the same filesystem is
+    # atomic on POSIX. -RP preserves symlinks inside the source rather than
+    # following them — guards against an attacker-controlled symlink loop.
+    staging="$(mktemp -d "${dest_root}/${staging_prefix}.XXXXXX")"
+    trap 'rm -rf "${staging}"' EXIT
+    cp -RP "${src}/." "${staging}/"
+    if [[ -e "${dest}" || -L "${dest}" ]]; then
+      rm -rf "${dest}"
+    fi
+    mv "${staging}" "${dest}"
+    trap - EXIT
+    log "install.sh: copied ${src} -> ${dest}"
   fi
-elif [[ "${mode}" == "symlink" ]]; then
-  # ln -sfn replaces an existing symlink atomically, but it does NOT replace a
-  # real directory — it would create the link inside the dir. Remove first.
-  if [[ -d "${dest}" ]] && [[ ! -L "${dest}" ]]; then
-    rm -rf "${dest}"
-  fi
-  ln -sfn "${src}" "${dest}"
-  # Verify dest is now a symlink pointing where we expect — defends against
-  # the silent "link landed inside an existing dir" mode.
-  if [[ ! -L "${dest}" ]] || [[ "$(readlink "${dest}")" != "${src}" ]]; then
-    echo "install.sh: symlink at ${dest} did not land correctly. Investigate." >&2
-    exit 1
-  fi
-  log "install.sh: symlinked ${dest} -> ${src}"
-else
-  # Stage into a sibling tmp dir, then rename. mv on the same filesystem is
-  # atomic on POSIX. -RP preserves symlinks inside the source rather than
-  # following them — guards against an attacker-controlled symlink loop in
-  # pro-coder/.
-  staging="$(mktemp -d "${dest_root}/.pro-coder.staging.XXXXXX")"
-  trap 'rm -rf "${staging}"' EXIT
-  cp -RP "${src}/." "${staging}/"
-  if [[ -e "${dest}" || -L "${dest}" ]]; then
-    rm -rf "${dest}"
-  fi
-  mv "${staging}" "${dest}"
-  trap - EXIT
-  log "install.sh: copied ${src} -> ${dest}"
-fi
 
-# Surface the verify step so the user knows the install landed.
-if [[ "${dry_run}" != 1 ]]; then
-  if [[ -f "${dest}/SKILL.md" ]]; then
-    log "install.sh: verified ${dest}/SKILL.md exists. Skill is installed."
-  else
-    echo "install.sh: WARNING — ${dest}/SKILL.md not found after install. Investigate." >&2
-    exit 1
+  # Surface the verify step so the user knows the install landed.
+  if [[ "${dry_run}" != 1 ]]; then
+    if [[ -f "${dest}/SKILL.md" ]]; then
+      log "install.sh: verified ${dest}/SKILL.md exists. Skill is installed."
+    else
+      echo "install.sh: WARNING — ${dest}/SKILL.md not found after install. Investigate." >&2
+      exit 1
+    fi
   fi
-fi
+done
 
 # Build + install the bundled lens binary unless explicitly skipped. install-lens.sh
 # handles cargo-not-installed gracefully (warns + exits 0) so the skill is still
