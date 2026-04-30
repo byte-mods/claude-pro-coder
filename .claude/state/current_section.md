@@ -1,68 +1,73 @@
-# Section Snapshot — 2026-04-28T(claude-skill packaging)
+# Section Snapshot — 2026-04-29 (claude-skill section 3)
 
 ## Just completed
-- Project: claude-skill (this repo) — distinct from the lens project whose prior snapshot lived in this same file.
-- Section: 1 (claude-skill) — packaging closure: convert manual README install steps into runnable artifacts.
-- Tasks closed: T1, T2, T3.
+- Project: claude-skill (`/Users/sudeepdasgupta/projects/claude-skill`).
+- Section: 3 — comprehensive README rewrite.
+- Tasks closed: T1.
 - Closure summary:
-  - `scripts/install.sh` (NEW, ~155 LOC) — idempotent installer; copy or symlink mode; atomic copy via mktemp staging + mv; symlink uses ln -sfn with explicit rm of pre-existing real dir; unsafe-dest guard (rejects /, "", $HOME, /usr/*, /etc/*, /var/*, /System/*, /Library/*, /opt/*, /boot/*, /dev/*, /proc/*, /sys/*); --copy/--symlink mutex; require_value() for --dest; `set -euo pipefail`; HOME-unset safe via `: "${HOME:=}"`.
-  - `scripts/uninstall.sh` (NEW, ~100 LOC) — idempotent uninstaller; --dry-run; --quiet; same unsafe-dest guard as install; defence-in-depth tail-segment check (refuses if computed dest doesn't end in `/super-coder`); symlink-aware (rm -rf at top level removes the link, not target).
-  - `README.md` — Step 2 / Updating / Uninstalling sections rewritten to point at the scripts as the recommended path; manual fallback retained.
-- Per-task super-qa verdicts: T1 PASS (5 MINORs), T2 PASS (5 MINORs), T3 PASS by inspection (doc-only).
-- Section-level super-qa: PASS with 4 integration MINORs (drift risk on duplicated case lists; no orphan-staging reap; no round-trip integration test; CLI flag asymmetry between scripts).
-- Test totals: 17 inline T1 smoke tests + 14 inline T2 smoke tests + 1 T3 doc-claim verification = 32 assertions, all green. No test framework introduced (shell scripts; tests are inline `bash -c` blocks in this conversation, not committed). Shellcheck unavailable locally; not run.
+  - **T1** (`README.md`, full rewrite, ~620 lines): restructured the user-facing entry point. Added prominent **Features** table, **Command reference** covering all four scripts (`install.sh`, `install-lens.sh`, `install-mcp.sh`, `uninstall.sh`) plus `scripts/test/round_trip.sh` plus the full `lens` CLI subcommand surface. Added explicit **How Claude uses it** walkthrough — bootstrap, 6-phase loop with tool-per-phase mapping, MCP tool surface (`lens_follow` / `lens_refs` / `lens_query` / `lens_explain` / `lens_path` / `lens_slice` / `lens_map`), five persistence layers. Updated **What got installed where** to include `~/.claude.json` (MCP entry) and the `~/.claude.json.bak.*` backup pattern. Documented `--no-mcp` and `--claude-json` flags missing from prior README. Added a dedicated **Tests** section. Per-task super-qa: PASS (zero defects after one MINOR coverage gap closed inline — `lens <PATH>` graphify-compat positional form added to lens index-lifecycle list).
+- Section-level super-qa: skipped intentionally. Single-task section touching one file; per-task super-qa already cross-checked the README against `cli.rs`, all four scripts, `SKILL.md`, and the test suite. Section-level pass would have re-read the same diff with the same context — no compositional surface to verify.
+- Test totals: re-ran `bash scripts/test/round_trip.sh` during super-qa cross-check → `Total: 49, Failures: 0`. No new tests this section (docs-only).
+
+## Code-map updates this section
+- No new or revised code-map notes. README is documentation, not a code area with invariants / public API / callers. New install-pipeline understanding is already captured in the existing scripts' headers and in the prior section's code-map notes (`scripts-safety-helpers.md`, `scripts-uninstall.md`, `scripts-test-suite.md`).
 
 ## Verified facts carried forward
-- `scripts/install.sh` resolves source via `script_dir="$(cd "$(dirname "$0")" && pwd)"`; `repo_root="${script_dir}/.."` — the script must live at `<repo>/scripts/install.sh`. Symlink-invocation safe.
-- Both scripts use the IDENTICAL unsafe-dest case statement at install.sh:73-83 and uninstall.sh:48-58. Drift between them is a known integration smell; flagged as MINOR.
-- install copy mode stages into `${dest_root}/.super-coder.staging.XXXXXX` then `mv`s into place — same-fs atomic. EXIT trap removes staging on early exit. SIGKILL leaks staging.
-- install symlink mode does NOT replace a pre-existing REAL directory automatically — bug in iteration 1 was that `ln -sfn target dir/` created `dir/super-coder` symlink INSIDE the dir; fixed at install.sh:120-122 with explicit `rm -rf` if `[[ -d ${dest} && ! -L ${dest} ]]`, plus a verify step at install.sh:126-129 that errors out if the post-`ln` state isn't a symlink to `${src}`.
-- uninstall on a symlink top-level uses `rm -rf "${dest}"` (no trailing slash) — POSIX/BSD/Linux unlinks the symlink, NOT the target.
-- README claims (--symlink, --copy, --force, --dest, --dry-run) all map to real script flags as of this snapshot.
+- Lens CLI surface (verified at `lens/crates/lens-cli/src/cli.rs:25-136`): 13 subcommands — `init`, `index`, `update`, `query`, `follow`, `refs`, `slice`, `add`, `path`, `explain`, `map`, `meter`, `watch`, `mcp`. Plus top-level positional `path: Option<PathBuf>` (`cli.rs:17-18`) + `--update` flag (`cli.rs:21-22`) for graphify-compat.
+- Lens default budgets: `query --budget 2000` (`cli.rs:47`), `follow --budget 2000` (`cli.rs:58`), `slice --budget 2000` (`cli.rs:74`). README's example `--budget 1500` invocations are explicit overrides, not defaults.
+- Lens version pinned at `0.1.0` (`lens/Cargo.toml:9`).
+- Lens vendored SHA pinned at `a29f523` (`lens/VENDOR.txt`).
+- MCP tool names (registered surface, per `scripts/install-mcp.sh:2-4`): `lens_follow`, `lens_refs`, `lens_query`, `lens_explain`, `lens_path`, `lens_slice`, `lens_map`. The actual tool implementation lives inside the `lens mcp` server (in the binary); `install-mcp.sh` only registers `command: <lens-bin> args: ["mcp"]` in `~/.claude.json`.
+- Install orchestration (`scripts/install.sh:171-200`): `install.sh` calls `install-lens.sh` (skipped if `--no-lens`) then `install-mcp.sh` (skipped if `--no-mcp` OR `--no-lens`). Both sub-scripts are independently runnable.
+- `install-mcp.sh` uses Python's `os.replace` for atomic JSON write (`install-mcp.sh:186`). Backup at `${claude_json}.bak.YYYYMMDD-HHMMSS` before any write (`install-mcp.sh:174-177`).
+- Test suite output line is exactly `Total: 49, Failures: 0` — verified by running.
 
 ## Open invariants for next section
-- Hard rule "graphify query / graphify . --update" is vacuous in this repo because graphify's code-extraction does not index Markdown or shell scripts. Future code (e.g. a Rust/Python validator for SKILL.md) WOULD trigger graph indexing — the rule re-applies the moment any source code lands.
-- The skill's actual artifact is `super-coder/SKILL.md` — packaging files are operational, not part of the skill itself. Future sections that touch SKILL.md must be run as their own section with super-qa, not bundled with packaging.
-- Any new shell script under `scripts/` MUST: use `set -euo pipefail`; default `${HOME:=}` before use; share the same unsafe-dest case list (or factor it to a sourced helper); reject `--<flag>` as a value; surface errors to stderr.
-- The `.claude/state/` directory in this repo is configured as `ignore` per `.claude/state/gitignore_policy`. Snapshots are private to the user's machine.
+All Section 1 + Section 2 invariants still hold:
+- Any new shell script under `scripts/` MUST use `set -euo pipefail`, default `${HOME:=}`, source `_lib.sh`, reject `--<flag>` as a value, surface errors to stderr.
+- Tests must use `/tmp/...` explicitly, NOT `${TMPDIR}`. The safety guard correctly rejects `/var/*`; macOS `${TMPDIR}` lives there.
+- Cleanup-tracking arrays inside helpers invoked via `$(fn)` are silently broken — use a single parent dir with one `rm -rf` instead.
+- The `sc_canonicalize_dest` helper is purely textual. If a future change needs symlink resolution, add a SEPARATE helper.
+- The `.claude/state/` directory is `commit` per `.claude/state/gitignore_policy`.
+
+New invariant from this section:
+- Any change to lens CLI surface (add/remove/rename a subcommand or flag) MUST update three places: `lens-cli/src/cli.rs` (source of truth), `README.md`'s "lens CLI — full subcommand surface" section, AND the MCP tool list in `scripts/install-mcp.sh:2-4` if it's a tool exposed via MCP. The README's claim of which tools Claude can call is grounded in `install-mcp.sh`'s comment header — that's where the MCP-exposed surface is canonically declared from claude-skill's perspective.
 
 ## Next section
-- Goal: pick from the remaining-work list below, or close out the project as "good enough" and ship.
-- Entry blast radius (when next section starts): depends on chosen task.
-- Open questions for next session:
-  - Is shellcheck-via-CI worth adding (GitHub Actions, ~10 lines), or is the current "syntax OK via bash -n" sufficient?
-  - Should examples/ be transcripts (verbatim Claude output) or templated prompts? Transcripts age fast; templates stay relevant.
-  - Should the unsafe-dest list be factored to `scripts/_lib.sh` to eliminate drift? Pros: single source of truth. Cons: extra file, sourcing complexity.
+- **Goal:** pick from the deferred backlog below — or close the project as feature-complete.
+- **Entry blast radius:** depends on chosen task.
+- **Open questions for next session:**
+  - Is shellcheck-via-CI worth adding now that the test suite gives CI a real signal to gate on? Cheap (~10 lines GitHub Actions).
+  - Should the README's MCP tool list cite the lens binary's source file rather than `install-mcp.sh`'s comment? Currently the comment is the user-facing source of truth for which MCP tools are claimed; the actual implementation isn't read in this repo.
 
 ## Remaining work (handed back to user)
 
-### Tier A — close-the-loop on this section's MINORs (high signal, low effort)
-1. **Extract shared unsafe-dest list** into `scripts/_lib.sh` (sourced by both scripts). Eliminates drift risk between install.sh and uninstall.sh case statements.
-2. **Round-trip integration test** — a single test asserting: `install.sh && uninstall.sh` → `${repo}/super-coder/` intact + `${HOME}/.claude/skills/super-coder` absent + `${HOME}/.claude/skills/` parent preserved. Two variants: copy mode and symlink mode.
-3. **Orphan staging reap** in uninstall.sh — `rm -rf "${dest_root}"/.super-coder.staging.*` after main remove (with the same defence-in-depth check). Closes SIGKILL'd-install leak.
-4. **Add missed system paths** to both scripts' unsafe-dest case lists: `/Applications`, `/Network`, `/Volumes`, `/private` (macOS); `/home`, `/root`, `/srv`, `/run`, `/lib`, `/lib64`, `/mnt`, `/media` (Linux).
-5. **Path canonicalisation** before unsafe-dest check (resolve `..` via `cd "$path" && pwd`). Closes `--dest /Users/me/skills/../../../etc` bypass.
+### Tier B — discoverability / polish (carried over from Section 1)
+1. `install.sh --dry-run` and `install.sh --quiet` for symmetry with `uninstall.sh`.
+2. `install.sh --dest=VALUE` form (currently only `--dest VALUE` works).
+3. CHANGELOG.md — versioned history.
+4. CONTRIBUTING.md — fork/edit/upstream flow.
+5. CI — GitHub Actions running `bash scripts/test/round_trip.sh` + `shellcheck scripts/*.sh` + Markdown-lint.
 
-### Tier B — discoverability / polish
-6. **install.sh --dry-run** and **install.sh --quiet** for symmetry with uninstall.sh.
-7. **install.sh --dest=VALUE** form (currently only `--dest VALUE` works).
-8. **CHANGELOG.md** — versioned history of the skill (v5 is current; document what shipped when).
-9. **CONTRIBUTING.md** — how to fork, edit SKILL.md, propose changes upstream. The README already covers customisation but contribution flow is undocumented.
-10. **CI** — GitHub Actions workflow running `shellcheck scripts/*.sh` and a Markdown-lint pass on SKILL.md / README.md. Catches script regressions before they ship.
+### Tier C — nice-to-have, low priority (carried over)
+6. `examples/` directory — sample prompts.
+7. Meta-tests for `super-coder/SKILL.md` — frontmatter parser, internal reference checker.
+8. EUID/root warning in scripts when run as root.
+9. `--strict` flag with positive-allow-list path validation.
 
-### Tier C — nice-to-have, low priority
-11. **examples/ directory** — sample prompts demonstrating: (a) a small change driving fast-path mode, (b) a multi-task section showing the QA loop, (c) a section-boundary triggered at 5+ tasks. Templates, not transcripts.
-12. **Meta-tests for SKILL.md** — a parser that validates: frontmatter is well-formed, all referenced commands (graphify, mkdir, etc.) are spelled correctly, all internal section references (P1, P2, ..., P6) are consistent across the file.
-13. **EUID/root warning** in both scripts — print a one-line note when `EUID == 0`, since running as root broadens the blast radius of the unsafe-dest list misses.
-14. **--dest validation against trusted-prefix list** (e.g. only allow paths whose realpath starts with `${HOME}` or `/tmp` or `/usr/local/share`) — opt-in via `--strict` flag.
+### Section 2 deferred MINORs (low priority)
+10. `uninstall.sh:118` — "Nothing to remove at ${dest}" message reads oddly when orphans were just reaped.
+
+### Section 3 deferred MINORs (super-qa noted, all stylistic)
+11. README `lens init` "appends to .gitignore unless suppressed" phrasing — could be reworded to match `cli.rs:33`'s exact help text "Skip modifying .gitignore". Cosmetic.
+12. README `lens --version` claim of `0.1.0` is accurate (verified at `Cargo.toml:9`) but not surfaced as a verifiable assertion in the docs. Cosmetic.
 
 ### Tier D — explicitly out of scope
-15. The SKILL.md itself — no changes proposed; it is feature-complete at v5 per inspection.
-16. Lens project work (T6/T7/T8 from the prior `lens` snapshot that was overwritten by this one) — that lives in `~/projects/lens/`, separate codebase, separate skill invocation.
+13. `super-coder/SKILL.md` — feature-complete at v5.
 
 ## CLAUDE.md proposals queued
-- 0 new proposals appended this section. Reason: the packaging work didn't surface any project-wide invariants that aren't already in SKILL.md or README.md. The 4 prior proposals from the lens project (1 from Section 2 part 1 + 3 from Section 1) remain in `.claude/state/claude_md_proposals.md` and target the lens repo's future CLAUDE.md, not this repo's.
+- 0 new proposals appended this section. Reason: this section was a docs rewrite; no project-wide invariants were discovered that aren't already in the existing scripts' comments, the prior code-map notes, or the README itself. The 4 prior proposals targeting the lens repo's future CLAUDE.md remain in `.claude/state/claude_md_proposals.md`.
 
 ## Resume protocol reminder
-- This snapshot REPLACED a prior snapshot for the lens project. If you resume work on lens, read `~/projects/lens/` directly; the queued CLAUDE.md proposals in `.claude/state/claude_md_proposals.md` still target lens, not this repo.
-- For claude-skill resume: read `README.md`, `super-coder/SKILL.md`, the two scripts, and this snapshot. Re-verify any claim before acting. There is no `CLAUDE.md` for claude-skill itself (and proposing one is not yet justified — single-file skill, no cross-cutting invariants).
+- For claude-skill resume: read `README.md` (now ~620 lines, comprehensive), `super-coder/SKILL.md`, the four `scripts/*.sh` files plus `scripts/_lib.sh` and `scripts/test/round_trip.sh`, this snapshot, and the three notes under `.claude/state/code-map/`. Re-verify every claim against current source before acting.
+- For lens resume (separate repo at `~/projects/lens/`): the queued CLAUDE.md proposals in `.claude/state/claude_md_proposals.md` still target lens, not claude-skill.
