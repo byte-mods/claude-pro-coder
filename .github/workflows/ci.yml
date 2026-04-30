@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS catches the bash 3.2 compat path; ubuntu catches everything else.
+        # Both run the install pipeline plus the SKILL.md meta-tests.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show shell + bash version
+        run: |
+          echo "shell: ${SHELL:-unknown}"
+          bash --version
+          uname -a
+
+      - name: Install shellcheck (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck
+
+      - name: Install shellcheck (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: shellcheck — install pipeline
+        run: |
+          shellcheck scripts/_lib.sh \
+                     scripts/install.sh \
+                     scripts/install-lens.sh \
+                     scripts/install-mcp.sh \
+                     scripts/uninstall.sh
+
+      - name: shellcheck — test suite
+        run: |
+          shellcheck scripts/test/round_trip.sh \
+                     scripts/test/skill_meta.sh
+
+      - name: SKILL.md meta-tests
+        run: bash scripts/test/skill_meta.sh
+
+      - name: round-trip integration tests
+        # The suite uses --no-lens --no-mcp so cargo is not required for the
+        # round-trip itself. Lens build is exercised separately if desired.
+        run: bash scripts/test/round_trip.sh
