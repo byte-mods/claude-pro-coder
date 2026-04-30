@@ -95,6 +95,15 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+### Changed
+- **SKILL.md: mandatory code commenting after QA PASS.** P4 task flow now
+  includes step 6 — comment every function, method, struct, module, and
+  non-trivial logic block with why-comments after super-qa returns PASS.
+  New hard-rule invariant #13 and a pre-response checklist item enforce
+  this. Comments use the language's native doc format so `lens follow`
+  surfaces them; well-commented code lets future AI sessions skip reading
+  function bodies.
+
 ## [0.1.0] - 2026-04-29
 
 Initial public release.

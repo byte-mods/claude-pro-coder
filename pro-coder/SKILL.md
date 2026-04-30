@@ -157,7 +157,8 @@ For each task `Ti`:
 3. Write tests in the **same task**. Naming: `test_<component>_<scenario>_<expected_behavior>`. Cover happy path, edges, errors, concurrency where applicable.
 4. Run the full suite. If a pre-existing test breaks, **stop** — do not modify the test. The regression is in the new code.
 5. **Hand off to super-qa** *(see P4.5 — mandatory)*. Iterate until super-qa returns `VERDICT: PASS`.
-6. Mark `Ti` complete. Advance.
+6. **Comment the code.** After QA PASS, add concise why-comments to every function, method, struct, module, and non-trivial logic block written or changed in this task. Explain: invariants upheld, edge cases handled, non-obvious design decisions, and any constraints the code assumes but does not enforce. Use the language's idiomatic doc format (Rust `///`, Python docstrings, JSDoc `/** */`, Go `//`). For dense algorithmic passages, add inline comments explaining the strategy — not what each line does, but why this approach was chosen and what preconditions hold at each step. The audience is a developer (human or AI) reading this code cold six months from now: they should understand the logic without reconstructing your reasoning.
+7. Mark `Ti` complete. Advance.
 
 Never carry a half-implemented task forward.
 
@@ -481,7 +482,8 @@ Anything ambiguous is **not** trivial. When in doubt, full loop.
 10. No `Mutex` on declared hot paths — lock-free, sharded, or atomic.
 11. Match existing project style; surrounding code is the style guide.
 12. One concern per task. If it grows, split.
-13. No incidental trailing recaps after every response. **The three mandated user-facing summaries** (P3 plan presentation, P4.5 task close when awaited, P6 section boundary) are exempt — they follow the "Output for the user" format. Anything outside those three is "the user reads the diff."
+13. **Comment new code after QA PASS.** Every function, method, struct, module, and non-trivial logic block carries a why-comment — invariants upheld, edge cases handled, non-obvious design decisions, and constraints assumed. Dense algorithmic passages get inline strategy comments explaining the approach and preconditions. Use the language's native doc format (Rust `///`, Python docstrings, JSDoc, Go `//`). **No what-comments** — the code already says what. The audience is a developer reading cold six months from now, human or AI. Doc comments are extracted by `lens follow` at index time; well-commented code lets future AI sessions skip reading function bodies.
+14. No incidental trailing recaps after every response. **The three mandated user-facing summaries** (P3 plan presentation, P4.5 task close when awaited, P6 section boundary) are exempt — they follow the "Output for the user" format. Anything outside those three is "the user reads the diff."
 
 ---
 
@@ -497,6 +499,7 @@ Anything ambiguous is **not** trivial. When in doubt, full loop.
 - [ ] Any direct write to `CLAUDE.md` attempted? If yes — **stop, reroute to proposals queue.**
 - [ ] If implementing: tests written **and** the suite was run?
 - [ ] If a task was just completed: super-qa spawned and `VERDICT: PASS` (zero BLOCKER, zero MAJOR) received? If not — do not mark task done.
+- [ ] If a task just achieved QA PASS: were new/changed functions, structs, and non-trivial blocks commented with why-comments before marking complete? If not — add them now.
 - [ ] If P5: section-level super-qa pass spawned and PASS received before announcing audit complete?
 - [ ] Any `unwrap()` / `expect()` / `panic!()` introduced? If yes — fix or justify inline.
 - [ ] Trailing recap of what you just did? If yes — delete before sending. *(Exception: the three mandated summaries — plan presentation, task close, section close — must use the "Output for the user" format with a `What changed` table, plain English, no protocol jargon, no `file:line` citations, no `BLOCKER`/`MAJOR`/`MINOR`/`code-map`/`P1`–`P6` words inside the user-facing block.)*
