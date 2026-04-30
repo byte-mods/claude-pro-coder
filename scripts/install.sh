@@ -21,6 +21,7 @@
 #   scripts/install.sh --quiet           # suppress non-error output
 #   scripts/install.sh --strict          # extra paranoia — refuse paths outside ~/.claude/
 #   scripts/install.sh --allow-root      # opt in to running as root (default: refuse)
+#   scripts/install.sh --version          # print version and exit
 #
 # Every value-taking flag accepts both `--flag VALUE` and `--flag=VALUE` forms.
 #
@@ -100,7 +101,10 @@ while [[ $# -gt 0 ]]; do
     --strict)  strict=1;  shift ;;
     --allow-root) allow_root=1; shift ;;
     -h|--help)
-      sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    --version)
+      sc_version
       exit 0 ;;
     *) echo "install.sh: unknown arg: $1" >&2; exit 2 ;;
   esac

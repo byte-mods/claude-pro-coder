@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project does not yet adhere to semantic versioning — pre-1.0 releases
 may break compatibility on minor bumps.
 
-## [Unreleased]
+## [0.2.0] - 2026-05-01
 
 ### Changed
 - **BREAKING — skill renamed `super-coder` → `pro-coder`.** The slash command
@@ -69,6 +69,31 @@ may break compatibility on minor bumps.
   sub-checks) covers SKILL.md structural integrity; test 8
   (`test_strict_and_root_guards`, +11) covers the `--strict`
   allow-list and `sc_assert_not_root` end-to-end.
+
+### Added (continued)
+- `VERSION` file at repo root — single source of truth for the project
+  version. Read by `sc_version()` in `scripts/_lib.sh`.
+- `--version` flag on all four scripts (`install.sh`, `uninstall.sh`,
+  `install-lens.sh`, `install-mcp.sh`). Echoes the project version from
+  `VERSION` and exits 0.
+- `CLAUDE.md` at repo root — machine-readable project contract covering
+  shell-script invariants, vendored-code policy, security-sensitive code,
+  and the release process.
+
+### Changed
+- README verify step 3 now sets clearer expectations for projects in
+  unsupported languages (Ruby, Java, C++, etc.) — `lens index` producing
+  0 symbols is expected there.
+- README `lens --version` verify step now anchors the expected version to
+  `lens/Cargo.toml` workspace version, not a bare hardcoded string.
+
+### Fixed
+- Vendored `lens/README.md` contains a stale `super-coder` reference (the
+  renamed skill). This is vendored upstream content pinned at
+  `lens/VENDOR.txt` SHA `a29f523` and intentionally not edited in place;
+  the known issue is documented in `CLAUDE.md`.
+
+## [Unreleased]
 
 ## [0.1.0] - 2026-04-29
 
@@ -157,5 +182,6 @@ Initial public release.
 - `--dry-run` on `install.sh` skips the cargo build entirely rather
   than running it in a no-write mode (cargo offers no such mode).
 
-[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sudeep-dasgupta/claude-skill/releases/tag/v0.1.0

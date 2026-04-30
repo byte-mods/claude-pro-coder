@@ -176,15 +176,18 @@ ls ~/.claude/skills/pro-coder/
 
 # 2. Lens binary works (only if you installed lens)
 lens --version
-# expected output: lens 0.1.0
+# expected output: lens 0.1.0 (matches lens/Cargo.toml workspace version)
 # if "command not found": ~/.claude/bin isn't on PATH (see Step 3 above) — that's fine,
 # Claude Code still calls lens by absolute path via the MCP entry in ~/.claude.json
 
-# 3. Smoke-test lens on a Rust or Python (or TS/JS/Go) project
+# 3. Smoke-test lens on a supported-language project (Rust, Python, TS/JS, Go)
 cd ~/some-project
 lens init
 lens index
-# expected: "lens index: wrote N files / N symbols / ... to .lens/index.db"
+# If the project uses a supported language: "lens index: wrote N files / N symbols / ... to .lens/index.db"
+# If the project is unsupported (Ruby, Java, C++, etc.): "lens index: wrote 0 files, 0 symbols" — this
+# is expected; the skill auto-detects an empty index and falls back to Read/Grep/Glob at runtime.
+# See the FAQ for the full language list.
 
 # 4. Inspect the MCP wire-up
 grep -A2 '"lens"' ~/.claude.json

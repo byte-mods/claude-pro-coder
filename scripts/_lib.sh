@@ -4,6 +4,9 @@
 # Sourced — do not run directly. Compatible with bash 3.2 (macOS default) and
 # bash 4+/5+ (Linux). No associative arrays, no case modifiers.
 #
+#   sc_version                       # emits the project version (reads VERSION
+#                                    # at repo root) on stdout.
+#
 # Public surface:
 #   sc_set_default_home              # ensures HOME is set under `set -u`
 #   sc_canonicalize_dest <path>      # emits an absolute, '.'-and-'..'-resolved
@@ -41,6 +44,19 @@ if [[ "${SC_LIB_LOADED:-0}" == 1 ]]; then
   return 0 2>/dev/null || exit 0
 fi
 SC_LIB_LOADED=1
+
+sc_version() {
+  # Emit the project version from the VERSION file at the repo root. _lib.sh
+  # lives at scripts/_lib.sh, so the repo root is one directory up from here.
+  local lib_dir repo_root
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  repo_root="$(cd "${lib_dir}/.." && pwd)"
+  if [[ -f "${repo_root}/VERSION" ]]; then
+    cat "${repo_root}/VERSION"
+  else
+    echo "unknown"
+  fi
+}
 
 sc_set_default_home() {
   # Default HOME so `set -u` does not trip when HOME is unset; the unsafe-dest
