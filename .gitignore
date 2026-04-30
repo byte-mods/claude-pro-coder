@@ -6,3 +6,12 @@
 node_modules/
 __pycache__/
 *.pyc
+
+# Lens build artefacts (vendored under lens/)
+lens/target/
+lens/**/*.rs.bk
+
+# Lens graphify analysis cache — regenerable from `graphify lens/`. The hashed
+# JSON files under graphify-out/cache/ are not source; bump the vendor SHA in
+# lens/VENDOR.txt rather than committing them.
+lens/**/graphify-out/
