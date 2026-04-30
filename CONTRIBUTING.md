@@ -14,7 +14,7 @@ the safety guards intact.
 ## Development setup
 
 Clone the repo and install the skill in **symlink mode** so edits to
-`super-coder/SKILL.md` are picked up by Claude Code without re-running install:
+`pro-coder/SKILL.md` are picked up by Claude Code without re-running install:
 
 ```bash
 git clone https://github.com/sudeep-dasgupta/claude-skill.git
@@ -22,8 +22,8 @@ cd claude-skill
 ./scripts/install.sh --symlink
 ```
 
-Symlink mode points `~/.claude/skills/super-coder` at the repo's
-`super-coder/` directory. Re-running install when the symlink already points
+Symlink mode points `~/.claude/skills/pro-coder` at the repo's
+`pro-coder/` directory. Re-running install when the symlink already points
 where expected is a no-op.
 
 If you do not have Rust installed, pass `--no-lens` to skip the cargo build
@@ -96,7 +96,7 @@ If a flag adds a value-taking option, support **both** `--flag VALUE` and
 
 ```
 .
-├── super-coder/SKILL.md     # the skill itself — Brainiac-OS v5
+├── pro-coder/SKILL.md     # the skill itself — Brainiac-OS v5
 ├── lens/                    # vendored Rust CLI (do not edit in place;
 │                            # update via VENDOR.txt SHA bump)
 ├── scripts/
@@ -120,7 +120,7 @@ upstream first.
 ## The 6-phase loop (the way the project gets built)
 
 This repo eats its own dog food. Non-trivial changes go through the same
-6-phase loop the `super-coder` skill enforces — Comprehend, Plan, Implement,
+6-phase loop the `pro-coder` skill enforces — Comprehend, Plan, Implement,
 Test, Audit, Section Boundary. Section snapshots live under
 `.claude/state/current_section.md`; persistent code-comprehension notes
 live under `.claude/state/code-map/`. The `.claude/state/` directory is
@@ -131,7 +131,7 @@ you should keep the test suite green and the safety guards intact, and
 your PR description should explain the change well enough that a reviewer
 can audit it without re-running your investigation.
 
-For the full protocol, see `super-coder/SKILL.md`.
+For the full protocol, see `pro-coder/SKILL.md`.
 
 ## Submitting changes
 
@@ -155,7 +155,7 @@ For the full protocol, see `super-coder/SKILL.md`.
   prerequisites are bash 3.2+, `python3`, `cargo` (optional). Adding
   jq, yq, or a new runtime is a hard sell.
 - Edits to `lens/` source. Patch upstream and bump the vendored SHA.
-- Wide refactors of `super-coder/SKILL.md` without prior discussion.
+- Wide refactors of `pro-coder/SKILL.md` without prior discussion.
   The skill is feature-complete at v5; behavioural drift here changes
   Claude's behaviour in production for every user.
 

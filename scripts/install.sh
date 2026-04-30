@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the super-coder skill into ~/.claude/skills/super-coder.
+# Install the pro-coder skill into ~/.claude/skills/pro-coder.
 #
 # By default, also (a) builds the bundled `lens` binary under ~/.claude/bin and
 # (b) registers it as an MCP server in ~/.claude.json so Claude Code calls
@@ -119,7 +119,7 @@ sc_assert_not_root "${EUID}" "${allow_root}" "install.sh" || exit 1
 # Reuse _sc_script_dir from the source-block above (already absolute, BASH_SOURCE-based).
 script_dir="${_sc_script_dir}"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-src="${repo_root}/super-coder"
+src="${repo_root}/pro-coder"
 
 if [[ ! -f "${src}/SKILL.md" ]]; then
   echo "install.sh: cannot find SKILL.md at ${src}/SKILL.md" >&2
@@ -142,7 +142,7 @@ if [[ "${strict}" == 1 ]]; then
   sc_assert_strict_allowed "${claude_json}"  "${HOME}" "install.sh" || exit 1
 fi
 
-dest="${dest_root}/super-coder"
+dest="${dest_root}/pro-coder"
 
 if [[ "${dry_run}" == 1 ]]; then
   log "install.sh: --dry-run: would mkdir -p ${dest_root}"
@@ -207,8 +207,8 @@ else
   # Stage into a sibling tmp dir, then rename. mv on the same filesystem is
   # atomic on POSIX. -RP preserves symlinks inside the source rather than
   # following them — guards against an attacker-controlled symlink loop in
-  # super-coder/.
-  staging="$(mktemp -d "${dest_root}/.super-coder.staging.XXXXXX")"
+  # pro-coder/.
+  staging="$(mktemp -d "${dest_root}/.pro-coder.staging.XXXXXX")"
   trap 'rm -rf "${staging}"' EXIT
   cp -RP "${src}/." "${staging}/"
   if [[ -e "${dest}" || -L "${dest}" ]]; then
@@ -251,12 +251,12 @@ if [[ "${install_lens}" == 1 ]]; then
     fi
     log "install.sh: building bundled lens (pass --no-lens to skip)"
     if ! "${script_dir}/install-lens.sh" "${lens_args[@]}"; then
-      echo "install.sh: WARNING — install-lens.sh failed. super-coder will fall back to Read/Grep/Glob at runtime." >&2
+      echo "install.sh: WARNING — install-lens.sh failed. pro-coder will fall back to Read/Grep/Glob at runtime." >&2
       # Do not fail the overall install — the skill works in fallback mode.
     fi
   fi
 else
-  log "install.sh: --no-lens passed; skipped lens build. super-coder will fall back to Read/Grep/Glob at runtime."
+  log "install.sh: --no-lens passed; skipped lens build. pro-coder will fall back to Read/Grep/Glob at runtime."
 fi
 
 # Wire the lens MCP server into ~/.claude.json so Claude Code spawns it at

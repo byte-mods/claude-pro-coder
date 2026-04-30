@@ -1,7 +1,7 @@
-# Examples — sample prompts for the super-coder skill
+# Examples — sample prompts for the pro-coder skill
 
 These are concrete prompts you can paste into Claude Code (with the
-super-coder skill installed) to see the 6-phase loop in action. Each
+pro-coder skill installed) to see the 6-phase loop in action. Each
 example illustrates one shape of work the skill handles well.
 
 | File | Shape | Why it's interesting |
@@ -27,7 +27,7 @@ Each example file is structured as:
 
 The prompts assume:
 
-- The super-coder skill is installed (run `./scripts/install.sh` from
+- The pro-coder skill is installed (run `./scripts/install.sh` from
   the repo root).
 - `lens` is built and on `$PATH` (the install does this unless you
   passed `--no-lens`). Without lens, the skill drops to fallback mode

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Meta-tests for super-coder/SKILL.md — catches doc rot before users hit it.
+# Meta-tests for pro-coder/SKILL.md — catches doc rot before users hit it.
 #
 # What this validates:
 #   1. Frontmatter — `---` opener, `name:` and `description:` keys, `---` closer.
@@ -20,7 +20,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
-skill="${repo_root}/super-coder/SKILL.md"
+skill="${repo_root}/pro-coder/SKILL.md"
 
 failures=0
 total=0
@@ -65,12 +65,12 @@ else
   fail frontmatter_has_description
 fi
 
-# `name` value must equal "super-coder" — the install pipeline expects it.
+# `name` value must equal "pro-coder" — the install pipeline expects it.
 name_value="$(awk '/^name:[[:space:]]+/ {sub(/^name:[[:space:]]+/, ""); print; exit}' "${skill}")"
-if [[ "${name_value}" == "super-coder" ]]; then
-  pass frontmatter_name_is_super_coder
+if [[ "${name_value}" == "pro-coder" ]]; then
+  pass frontmatter_name_is_pro_coder
 else
-  fail "frontmatter_name_is_super_coder — got '${name_value}'"
+  fail "frontmatter_name_is_pro_coder — got '${name_value}'"
 fi
 
 # --- 2. Required top-level sections --------------------------------------

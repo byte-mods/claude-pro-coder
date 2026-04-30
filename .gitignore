@@ -15,3 +15,4 @@ lens/**/*.rs.bk
 # JSON files under graphify-out/cache/ are not source; bump the vendor SHA in
 # lens/VENDOR.txt rather than committing them.
 lens/**/graphify-out/
+.lens/

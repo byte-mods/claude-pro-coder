@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uninstall the super-coder skill from ~/.claude/skills/super-coder.
+# Uninstall the pro-coder skill from ~/.claude/skills/pro-coder.
 # Also removes the bundled `lens` binary at ~/.claude/bin/lens (and its
 # install marker) and the `mcpServers.lens` entry from ~/.claude.json by
 # default. Pass --keep-lens to leave the binary in place; --keep-mcp to leave
@@ -102,21 +102,21 @@ if [[ "${strict}" == 1 ]]; then
   sc_assert_strict_allowed "${claude_json}"  "${HOME}" "uninstall.sh" || exit 1
 fi
 
-dest="${dest_root}/super-coder"
+dest="${dest_root}/pro-coder"
 
 # Defence-in-depth: even if dest_root passed the guard, refuse to remove a path
-# whose final segment isn't `super-coder`. Closes a typo-injection style foot-gun
+# whose final segment isn't `pro-coder`. Closes a typo-injection style foot-gun
 # (e.g. a future caller passing dest_root=/Users/me/important by mistake — the
-# concatenation only ever appends /super-coder so this is mostly a sanity check).
+# concatenation only ever appends /pro-coder so this is mostly a sanity check).
 case "${dest}" in
-  */super-coder ) ;;
+  */pro-coder ) ;;
   * )
-    echo "uninstall.sh: computed dest '${dest}' does not end in /super-coder. Refusing." >&2
+    echo "uninstall.sh: computed dest '${dest}' does not end in /pro-coder. Refusing." >&2
     exit 1 ;;
 esac
 
 # Reap orphan staging directories from interrupted prior installs. install.sh's
-# copy mode stages into `${dest_root}/.super-coder.staging.XXXXXX` (mktemp's
+# copy mode stages into `${dest_root}/.pro-coder.staging.XXXXXX` (mktemp's
 # 6-char alphanum pattern) and an EXIT trap removes it on graceful exit. A
 # SIGKILL'd install leaves the staging dir behind — dead weight that clutters
 # the skills root. Reap them here, with the same defence-in-depth tail check
@@ -124,11 +124,12 @@ esac
 #
 # Runs BEFORE the early-no-op return below so orphans are cleaned up even when
 # no current install exists at ${dest}.
+orphans_reaped=0
 if [[ -d "${dest_root}" ]]; then
   while IFS= read -r staging; do
     [[ -z "${staging}" ]] && continue
     case "${staging}" in
-      */.super-coder.staging.* ) ;;
+      */.pro-coder.staging.* ) ;;
       * ) continue ;;  # defence-in-depth — must match the staging prefix
     esac
     if [[ "${dry_run}" == 1 ]]; then
@@ -137,12 +138,18 @@ if [[ -d "${dest_root}" ]]; then
       log "uninstall.sh: reaping orphan staging dir ${staging}"
       rm -rf "${staging}"
     fi
-  done < <(find "${dest_root}" -maxdepth 1 -type d -name '.super-coder.staging.*' 2>/dev/null)
+    orphans_reaped=$((orphans_reaped + 1))
+  done < <(find "${dest_root}" -maxdepth 1 -type d -name '.pro-coder.staging.*' 2>/dev/null)
 fi
 
-# Nothing to do?
+# Nothing to do at the main dest? The reap above may still have done useful
+# work — if so, surface that instead of falsely claiming "already uninstalled".
 if [[ ! -e "${dest}" ]] && [[ ! -L "${dest}" ]]; then
-  log "uninstall.sh: nothing to remove at ${dest}. (Already uninstalled.)"
+  if [[ "${orphans_reaped}" -gt 0 ]]; then
+    log "uninstall.sh: reaped ${orphans_reaped} orphan staging dir(s); nothing else at ${dest}."
+  else
+    log "uninstall.sh: nothing to remove at ${dest}. (Already uninstalled.)"
+  fi
   exit 0
 fi
 

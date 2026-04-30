@@ -8,7 +8,7 @@
 # Sub-tests:
 #   1. test_canonicalize          — sc_canonicalize_dest in 13 textual cases
 #   2. test_safe_dest_guard       — sc_assert_safe_dest accepts/rejects correctly
-#   3. test_orphan_reap           — uninstall.sh reaps .super-coder.staging.*
+#   3. test_orphan_reap           — uninstall.sh reaps .pro-coder.staging.*
 #   4. test_round_trip_copy       — install --copy → assert → uninstall → assert
 #   5. test_round_trip_symlink    — install --symlink → assert → uninstall → assert
 #   6. test_install_extended_flags — --dest=VALUE form, --quiet, --dry-run on install.sh
@@ -136,9 +136,9 @@ test_orphan_reap() {
   echo "[3] test_orphan_reap"
   local jail; jail="$(make_jail)"
   local skills="${jail}/skills"
-  mkdir -p "${skills}/.super-coder.staging.AAA111/lib"
-  mkdir -p "${skills}/.super-coder.staging.BBB222"
-  mkdir -p "${skills}/.super-coder.staging.CCC333"
+  mkdir -p "${skills}/.pro-coder.staging.AAA111/lib"
+  mkdir -p "${skills}/.pro-coder.staging.BBB222"
+  mkdir -p "${skills}/.pro-coder.staging.CCC333"
   mkdir -p "${skills}/some-other-skill"
   echo "untouched" > "${skills}/some-other-skill/file.txt"
 
@@ -148,27 +148,27 @@ test_orphan_reap() {
     --claude-json "${jail}/cj" \
     --keep-lens --keep-mcp --quiet >/dev/null 2>&1 || true
 
-  assert_false orphan_AAA111_reaped  test -e "${skills}/.super-coder.staging.AAA111"
-  assert_false orphan_BBB222_reaped  test -e "${skills}/.super-coder.staging.BBB222"
-  assert_false orphan_CCC333_reaped  test -e "${skills}/.super-coder.staging.CCC333"
+  assert_false orphan_AAA111_reaped  test -e "${skills}/.pro-coder.staging.AAA111"
+  assert_false orphan_BBB222_reaped  test -e "${skills}/.pro-coder.staging.BBB222"
+  assert_false orphan_CCC333_reaped  test -e "${skills}/.pro-coder.staging.CCC333"
   assert_true  unrelated_dir_intact  test -d "${skills}/some-other-skill"
   assert_eq    unrelated_file_intact "$(cat "${skills}/some-other-skill/file.txt")" "untouched"
 
   # Dry-run must NOT remove orphans.
   local jail2; jail2="$(make_jail)"
-  mkdir -p "${jail2}/skills/.super-coder.staging.DRY1"
+  mkdir -p "${jail2}/skills/.pro-coder.staging.DRY1"
   "${scripts_dir}/uninstall.sh" \
     --dest "${jail2}/skills" \
     --bin-dir "${jail2}/bin" \
     --claude-json "${jail2}/cj" \
     --keep-lens --keep-mcp --dry-run --quiet >/dev/null 2>&1 || true
-  assert_true  dryrun_preserves_orphan test -d "${jail2}/skills/.super-coder.staging.DRY1"
+  assert_true  dryrun_preserves_orphan test -d "${jail2}/skills/.pro-coder.staging.DRY1"
 
   # Relative --dest: closes the gap that absolute-only tests would miss.
   # Validates T1+T2 composed end-to-end when uninstall is invoked from inside
   # the jail with a bare relative path.
   local jail3; jail3="$(make_jail)"
-  mkdir -p "${jail3}/skills/.super-coder.staging.REL1"
+  mkdir -p "${jail3}/skills/.pro-coder.staging.REL1"
   local saved_pwd="${PWD}"
   cd "${jail3}"
   "${scripts_dir}/uninstall.sh" \
@@ -178,7 +178,7 @@ test_orphan_reap() {
     --keep-lens --keep-mcp --quiet >/dev/null 2>&1 || true
   cd "${saved_pwd}"
   assert_false relative_dest_orphan_reaped \
-    test -e "${jail3}/skills/.super-coder.staging.REL1"
+    test -e "${jail3}/skills/.pro-coder.staging.REL1"
 }
 
 # --- Test 4 + 5: round trip ----------------------------------------------
@@ -191,7 +191,7 @@ run_round_trip() {
   local skills="${jail}/skills"
   mkdir -p "${skills}"
 
-  local src_skill="${repo_root}/super-coder/SKILL.md"
+  local src_skill="${repo_root}/pro-coder/SKILL.md"
   if [[ ! -f "${src_skill}" ]]; then
     fail "round_trip_${mode}_source_present"
     return
@@ -211,17 +211,17 @@ run_round_trip() {
   pass "round_trip_${mode}_install_succeeded"
 
   assert_true round_trip_${mode}_skill_md_present \
-    test -f "${skills}/super-coder/SKILL.md"
+    test -f "${skills}/pro-coder/SKILL.md"
 
   if [[ "${mode}" == "symlink" ]]; then
     assert_true round_trip_symlink_dest_is_link \
-      test -L "${skills}/super-coder"
+      test -L "${skills}/pro-coder"
     local link_target
-    link_target="$(readlink "${skills}/super-coder")"
+    link_target="$(readlink "${skills}/pro-coder")"
     assert_eq round_trip_symlink_target_correct \
-      "${link_target}" "${repo_root}/super-coder"
+      "${link_target}" "${repo_root}/pro-coder"
   else
-    if [[ -d "${skills}/super-coder" ]] && [[ ! -L "${skills}/super-coder" ]]; then
+    if [[ -d "${skills}/pro-coder" ]] && [[ ! -L "${skills}/pro-coder" ]]; then
       pass round_trip_copy_dest_is_real_dir
     else
       fail round_trip_copy_dest_is_real_dir
@@ -251,7 +251,7 @@ run_round_trip() {
   fi
   pass "round_trip_${mode}_uninstall_succeeded"
 
-  if [[ ! -e "${skills}/super-coder" ]] && [[ ! -L "${skills}/super-coder" ]]; then
+  if [[ ! -e "${skills}/pro-coder" ]] && [[ ! -L "${skills}/pro-coder" ]]; then
     pass "round_trip_${mode}_dest_gone"
   else
     fail "round_trip_${mode}_dest_gone"
@@ -301,7 +301,7 @@ test_install_extended_flags() {
     fail "install_dest_eq_form_accepted — see ${jail}/eq.log"
   fi
   assert_true install_dest_eq_form_landed \
-    test -f "${skills}/super-coder/SKILL.md"
+    test -f "${skills}/pro-coder/SKILL.md"
 
   # 6.2 — uninstall.sh --dest=VALUE form (symmetric coverage).
   if "${scripts_dir}/uninstall.sh" \
@@ -315,7 +315,7 @@ test_install_extended_flags() {
     fail "uninstall_dest_eq_form_accepted — see ${jail}/uninstall_eq.log"
   fi
   assert_false uninstall_dest_eq_form_removed \
-    test -e "${skills}/super-coder"
+    test -e "${skills}/pro-coder"
 
   # 6.3 — install.sh --quiet produces no stdout on success.
   local jail2; jail2="$(make_jail)"
@@ -334,7 +334,7 @@ test_install_extended_flags() {
   fi
   # Quiet still installs.
   assert_true install_quiet_still_installs \
-    test -f "${skills2}/super-coder/SKILL.md"
+    test -f "${skills2}/pro-coder/SKILL.md"
 
   # 6.4 — install.sh --dry-run does NOT create dest.
   local jail3; jail3="$(make_jail)"
@@ -351,7 +351,7 @@ test_install_extended_flags() {
     fail "install_dry_run_succeeded — see ${jail3}/dryrun.log"
   fi
   assert_false install_dry_run_no_dest_created \
-    test -e "${skills3}/super-coder"
+    test -e "${skills3}/pro-coder"
   # The dry-run log must mention what *would* happen — the "would copy" line.
   if grep -q "would copy" "${jail3}/dryrun.log"; then
     pass install_dry_run_logs_intent
@@ -370,7 +370,7 @@ test_install_extended_flags() {
     fail "install_dry_run_idempotent — see ${jail3}/dryrun2.log"
   fi
   assert_false install_dry_run_idempotent_no_dest \
-    test -e "${skills3}/super-coder"
+    test -e "${skills3}/pro-coder"
 
   # 6.5 — empty value via `--flag=` is rejected (require_eq_value contract).
   if "${scripts_dir}/install.sh" "--dest=" --copy --no-lens --no-mcp \

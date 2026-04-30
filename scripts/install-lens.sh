@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the vendored `lens` CLI and install the binary under ~/.claude/bin.
 #
-# Lens is super-coder's symbol-aware code-map tool. It replaces the legacy
+# Lens is pro-coder's symbol-aware code-map tool. It replaces the legacy
 # `graphify` calls that P1 (lens query / lens follow) and P5 (lens . --update)
 # rely on. If lens is missing at runtime, SKILL.md falls back to Read/Grep/Glob
 # — degraded but functional. This script's job is to make the fast path work
@@ -84,7 +84,7 @@ src="${repo_root}/lens"
 
 if [[ ! -f "${src}/Cargo.toml" ]]; then
   echo "install-lens.sh: cannot find lens crate at ${src}/Cargo.toml" >&2
-  echo "install-lens.sh: this script must live at <repo>/scripts/install-lens.sh and lens/ must be vendored alongside super-coder/" >&2
+  echo "install-lens.sh: this script must live at <repo>/scripts/install-lens.sh and lens/ must be vendored alongside pro-coder/" >&2
   exit 1
 fi
 
@@ -106,7 +106,7 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 1
   fi
   echo "${msg}" >&2
-  echo "install-lens.sh: skipping lens build. super-coder will fall back to Read/Grep/Glob at runtime." >&2
+  echo "install-lens.sh: skipping lens build. pro-coder will fall back to Read/Grep/Glob at runtime." >&2
   exit 0
 fi
 

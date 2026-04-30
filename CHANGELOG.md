@@ -8,6 +8,20 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING — skill renamed `super-coder` → `pro-coder`.** The slash command
+  is now `/pro-coder`. The skill directory at `~/.claude/skills/super-coder/`
+  is no longer installed to or read from; `install.sh` writes to
+  `~/.claude/skills/pro-coder/` instead. Existing installations should
+  remove the old directory manually:
+  ```
+  rm -rf ~/.claude/skills/super-coder
+  bash scripts/install.sh    # installs the renamed pro-coder skill
+  ```
+  Defence-in-depth tail-checks (`*/super-coder` → `*/pro-coder`) and the
+  staging-dir prefix (`.super-coder.staging.*` → `.pro-coder.staging.*`)
+  also moved. The internal QA role `super-qa` is unchanged.
+
 ### Added
 - `install.sh --dry-run` — print intended actions, make no filesystem changes.
   Skips the cargo build entirely under `--dry-run`; logs `would build lens`
@@ -31,7 +45,7 @@ may break compatibility on minor bumps.
   `scripts/_lib.sh`. Both use dependency-injected inputs so unit tests
   can exercise both code paths without actually being root or relying
   on real `${HOME}`.
-- User-facing summary format prescribed in `super-coder/SKILL.md` —
+- User-facing summary format prescribed in `pro-coder/SKILL.md` —
   the three mandated summary surfaces (plan presentation, task close,
   section close) now use a clean *What changed / Why it matters /
   Tests / What's next* block. Internal artifacts (`.claude/state/`
@@ -41,7 +55,7 @@ may break compatibility on minor bumps.
   bug-fix, cross-language refactor, fast-path docs, section boundary)
   with annotations explaining what the skill does internally for each
   shape of work.
-- `scripts/test/skill_meta.sh` — meta-tests for `super-coder/SKILL.md`.
+- `scripts/test/skill_meta.sh` — meta-tests for `pro-coder/SKILL.md`.
   27 sub-checks: frontmatter validity, required sections present, every
   P-reference resolves to a defined header, code-fence balance, no
   `<TODO>` / `<FIXME>` / `<TBD>` placeholder leaks. Wired into
@@ -62,10 +76,10 @@ Initial public release.
 
 ### Added
 
-#### `super-coder` skill (Brainiac-OS v5)
+#### `pro-coder` skill (Brainiac-OS v5)
 - 6-phase loop (Comprehend → Plan → Implement → Test → Audit → Section
   Boundary) with section-boundary context resets.
-- Two-agent team loop: super-coder (architect + implementer) plus a
+- Two-agent team loop: pro-coder (architect + implementer) plus a
   fresh-context super-qa adversarial reviewer spawned via the Agent
   tool. Per-task super-qa gate plus optional section-level super-qa
   before P6 closure.

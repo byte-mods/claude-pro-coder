@@ -1,10 +1,10 @@
-# super-coder
+# pro-coder
 
 > A Claude Code skill that turns Claude into a two-agent engineering team — a hyper-rigorous **architect** that plans and implements, and an adversarial **QA reviewer** that gates every task. They iterate until the work is provably correct, not just plausibly correct.
 
 Bundled with [`lens`](#lens--token-efficient-retrieval) — a symbol-aware code map that lets Claude pull minimal slices of your codebase instead of dumping whole files into context. Token-efficient, structural retrieval. Wired up as an MCP server so Claude calls lens verbs as structured tools, not Bash.
 
-Invoke with `/super-coder` inside Claude Code.
+Invoke with `/pro-coder` inside Claude Code.
 
 ---
 
@@ -20,11 +20,11 @@ cd ~/code/claude-skill
 
 The script installs three things:
 
-1. The skill at `~/.claude/skills/super-coder/SKILL.md` — Claude Code auto-discovers it.
+1. The skill at `~/.claude/skills/pro-coder/SKILL.md` — Claude Code auto-discovers it.
 2. The bundled `lens` binary at `~/.claude/bin/lens` (built from `lens/` via `cargo build --release`, ~30s first run, cached after).
 3. An `mcpServers.lens` entry in `~/.claude.json` — Claude Code spawns lens at startup as a structured-tool server.
 
-Open Claude Code in any project and type `/super-coder` followed by your engineering objective.
+Open Claude Code in any project and type `/pro-coder` followed by your engineering objective.
 
 If you don't have Rust, the install still works — the skill auto-detects the missing binary and falls back to `Read`/`Grep`/`Glob`. See [Prerequisites](#prerequisites).
 
@@ -58,8 +58,8 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 
 | | What | Where it lives |
 |---|---|---|
-| **Two-agent QA loop** | An adversarial **super-qa** subagent gates every task and every section. Read-only, structured verdicts, unbounded loop with stuck-loop detection. PASS requires zero `BLOCKER` and zero `MAJOR` defects. | `super-coder/SKILL.md` (P4.5, P5) |
-| **6-phase workflow** | Comprehend → Research → Plan → Implement+Test → Audit → Section Boundary. Active phase declared on every response. | `super-coder/SKILL.md` |
+| **Two-agent QA loop** | An adversarial **super-qa** subagent gates every task and every section. Read-only, structured verdicts, unbounded loop with stuck-loop detection. PASS requires zero `BLOCKER` and zero `MAJOR` defects. | `pro-coder/SKILL.md` (P4.5, P5) |
+| **6-phase workflow** | Comprehend → Research → Plan → Implement+Test → Audit → Section Boundary. Active phase declared on every response. | `pro-coder/SKILL.md` |
 | **Symbol-aware retrieval (lens)** | Budget-capped `lens follow`, `lens query`, `lens refs`, `lens slice`, `lens explain`, `lens path`, `lens map`. ~1500 tokens for a function definition + signature + body + callers regardless of file size. | `lens/` crate, `~/.claude/bin/lens` |
 | **MCP-native tool surface** | Lens runs as an MCP stdio server (`lens mcp`) auto-wired into `~/.claude.json`. Claude calls `lens_follow`, `lens_refs`, `lens_query`, `lens_explain`, `lens_path`, `lens_slice`, `lens_map` as structured tools — no Bash boilerplate, no string-parsing of stdout. | `scripts/install-mcp.sh`, `~/.claude.json` |
 | **Persistent code-map** | Per-area Markdown notes under `<project>/.claude/state/code-map/` capturing API shapes, invariants, callers, gotchas with `file:line` anchors. Survives across sessions; reconciled at every section close. | `<project>/.claude/state/code-map/*.md` |
@@ -109,7 +109,7 @@ cd ~/code/claude-skill
 
 `install.sh` is the orchestrator. It runs three steps:
 
-1. **Skill copy** — copies `super-coder/SKILL.md` → `~/.claude/skills/super-coder/SKILL.md`. Atomic rename via a staging dir; refuses to write under unsafe paths via the safe-dest guard.
+1. **Skill copy** — copies `pro-coder/SKILL.md` → `~/.claude/skills/pro-coder/SKILL.md`. Atomic rename via a staging dir; refuses to write under unsafe paths via the safe-dest guard.
 2. **Lens build** — invokes `scripts/install-lens.sh` to `cargo build --release` the `lens/` crate and install the binary at `~/.claude/bin/lens`. Skips on missing cargo with a warning. Idempotent: re-runs are no-ops when the lens source hash matches the marker at `~/.claude/bin/.lens.installed.sha`.
 3. **MCP wire-up** — invokes `scripts/install-mcp.sh` to add the `mcpServers.lens` entry to `~/.claude.json`. Backs up first (`~/.claude.json.bak.YYYYMMDD-HHMMSS`); atomic JSON write via Python; touches only the lens key, every other key in `claude.json` is preserved byte-for-byte.
 
@@ -154,7 +154,7 @@ If you'd rather do it yourself:
 mkdir -p ~/.claude/skills ~/.claude/bin
 
 # Skill
-cp -r ~/code/claude-skill/super-coder ~/.claude/skills/
+cp -r ~/code/claude-skill/pro-coder ~/.claude/skills/
 
 # Lens binary
 (cd ~/code/claude-skill/lens && cargo build --release)
@@ -171,7 +171,7 @@ chmod +x ~/.claude/bin/lens
 
 ```bash
 # 1. Skill is installed
-ls ~/.claude/skills/super-coder/
+ls ~/.claude/skills/pro-coder/
 # expected output: SKILL.md
 
 # 2. Lens binary works (only if you installed lens)
@@ -209,13 +209,13 @@ bash scripts/test/round_trip.sh
 
 | Path | Purpose |
 |---|---|
-| `~/.claude/skills/super-coder/SKILL.md` | The skill definition. Loaded by Claude Code at startup. |
+| `~/.claude/skills/pro-coder/SKILL.md` | The skill definition. Loaded by Claude Code at startup. |
 | `~/.claude/bin/lens` | The bundled lens binary (if cargo was available). |
 | `~/.claude/bin/.lens.installed.sha` | Content hash of vendored lens source — used for idempotent rebuild detection. |
 | `~/.claude.json` | Claude Code config; gets the `mcpServers.lens` entry pointing at the binary. Backed up to `~/.claude.json.bak.YYYYMMDD-HHMMSS` before any write. |
 | `~/.claude/agent-memory/brainiac-os/` | Cross-session durable memory (user prefs, validated feedback, stakeholder context). |
 
-**Per-project, on first `/super-coder` invocation:**
+**Per-project, on first `/pro-coder` invocation:**
 
 | Path | Purpose | Lifetime | Owner |
 |---|---|---|---|
@@ -231,7 +231,7 @@ bash scripts/test/round_trip.sh
 
 | Path | Purpose |
 |---|---|
-| `~/code/claude-skill/super-coder/SKILL.md` | The skill source. Edit + reinstall to customise. |
+| `~/code/claude-skill/pro-coder/SKILL.md` | The skill source. Edit + reinstall to customise. |
 | `~/code/claude-skill/lens/` | Vendored lens crate (Rust workspace: `lens-core` + `lens-cli`). Pinned at `lens/VENDOR.txt`. |
 | `~/code/claude-skill/scripts/` | `install.sh`, `install-lens.sh`, `install-mcp.sh`, `uninstall.sh`, `_lib.sh`, `test/round_trip.sh`. |
 
@@ -239,7 +239,7 @@ bash scripts/test/round_trip.sh
 
 ## Use it inside Claude Code
 
-Claude Code auto-discovers skills at startup by scanning `~/.claude/skills/`. There's no extra config — once `super-coder/SKILL.md` lives there, `/super-coder` becomes a slash command available in every project.
+Claude Code auto-discovers skills at startup by scanning `~/.claude/skills/`. There's no extra config — once `pro-coder/SKILL.md` lives there, `/pro-coder` becomes a slash command available in every project.
 
 ### Open Claude Code in your project
 
@@ -253,15 +253,15 @@ claude
 Type a slash command followed by your engineering goal:
 
 ```
-/super-coder build a sharded connection pool with backpressure for our Tokio service
+/pro-coder build a sharded connection pool with backpressure for our Tokio service
 ```
 
 ```
-/super-coder the ingest pipeline drops messages under load — find the cause and fix it
+/pro-coder the ingest pipeline drops messages under load — find the cause and fix it
 ```
 
 ```
-/super-coder refactor src/auth/session.rs to remove the Mutex on the hot path
+/pro-coder refactor src/auth/session.rs to remove the Mutex on the hot path
 ```
 
 ### Ending a section
@@ -278,7 +278,7 @@ The skill writes its snapshot, announces, and stops. Then run `/clear` (or `/com
 
 ## How Claude uses it
 
-When you invoke `/super-coder <goal>`, the skill loads its system prompt and Claude takes the architect role. Here is what happens, mechanically, in order.
+When you invoke `/pro-coder <goal>`, the skill loads its system prompt and Claude takes the architect role. Here is what happens, mechanically, in order.
 
 ### 1. Bootstrap *(once per project)*
 
@@ -349,7 +349,7 @@ Code-map and agent memory are the two long-lived layers. **Code-map** holds anyt
 
 | Command | Purpose |
 |---|---|
-| `/super-coder <goal>` | Invoke the skill. Goal is one or two lines; constraints/perf budgets/deadlines optional but useful. |
+| `/pro-coder <goal>` | Invoke the skill. Goal is one or two lines; constraints/perf budgets/deadlines optional but useful. |
 | `section boundary` | Force a P6 reset at any point. The skill snapshots state, appends any CLAUDE.md proposals, and stops. |
 | `reset` | Synonym for `section boundary`. |
 
@@ -422,7 +422,7 @@ Always backs up `claude.json` to `claude.json.bak.YYYYMMDD-HHMMSS` before writin
 ./scripts/uninstall.sh --quiet                 # suppress non-error output
 ```
 
-`uninstall.sh` also reaps orphan staging directories (`.super-coder.staging.*`) left behind by interrupted prior installs — useful if `install.sh` was SIGKILL'd mid-copy.
+`uninstall.sh` also reaps orphan staging directories (`.pro-coder.staging.*`) left behind by interrupted prior installs — useful if `install.sh` was SIGKILL'd mid-copy.
 
 ### `scripts/test/round_trip.sh` — regression test suite
 
@@ -443,7 +443,7 @@ The bundled lens binary at `~/.claude/bin/lens`. All subcommands run from the pr
 **Index lifecycle:**
 
 ```
-lens init [PATH] [--no-gitignore]   # create .lens/ + schema; appends to .gitignore unless suppressed
+lens init [PATH] [--no-gitignore]   # create .lens/ + schema; modifies .gitignore unless --no-gitignore
 lens index                          # full build from scratch
 lens update                         # incremental — re-extract changed files
 lens <PATH>                         # graphify-compat: index the given path
@@ -527,7 +527,7 @@ Lens is open source at [github.com/sudeep-dasgupta/lens](https://github.com/sude
 
 ```
               ┌─────────────────────────────┐
-              │      super-coder            │
+              │      pro-coder              │
               │  (architect + implementer)  │
               └──────────────┬──────────────┘
                              │  task complete →
@@ -552,7 +552,7 @@ Lens is open source at [github.com/sudeep-dasgupta/lens](https://github.com/sude
                   │                        │
         advance to next task               │
                                            ▼
-                              super-coder fixes,
+                              pro-coder fixes,
                               re-spawns super-qa
                               with "Previous failures
                               addressed: ..."
@@ -562,7 +562,7 @@ Lens is open source at [github.com/sudeep-dasgupta/lens](https://github.com/sude
 
 ### The split
 
-| | super-coder | super-qa |
+| | pro-coder | super-qa |
 |---|---|---|
 | **Role** | Architect, implementer | Adversarial reviewer |
 | **Context** | Persistent across the session | Fresh per spawn (`/clear` equivalent) |
@@ -575,7 +575,7 @@ Lens is open source at [github.com/sudeep-dasgupta/lens](https://github.com/sude
 - **Unbounded** — runs as many rounds as needed.
 - **Severity-tiered** — PASS requires zero `BLOCKER` and zero `MAJOR` defects. `MINOR` defects are logged but don't block.
 - **Stuck-loop detection** — if the *same defect* (same `file:line`, same root cause) recurs twice in a row, the task is treated as misspecified, escalated to the user, and re-decomposed in P3. Prevents livelock on bad specs.
-- **Dispute protocol** — super-coder may challenge a false-positive defect *once per task* with file:line evidence; super-qa adjudicates. More than one dispute per task = halt.
+- **Dispute protocol** — pro-coder may challenge a false-positive defect *once per task* with file:line evidence; super-qa adjudicates. More than one dispute per task = halt.
 
 ### Two QA gates per section
 
@@ -614,7 +614,7 @@ Every code-touching task runs through six phases. The active phase is declared a
 12. One concern per task. If it grows, split.
 13. No trailing summaries of what was just done. The diff speaks for itself.
 
-### How many rounds will super-qa and super-coder loop?
+### How many rounds will super-qa and pro-coder loop?
 
 **No fixed cap.** Loop is unbounded by design.
 
@@ -629,7 +629,7 @@ The only forced exits:
 
 1. **PASS** — zero BLOCKER, zero MAJOR. Task closes.
 2. **Stuck-loop detection** — same defect (same file:line, same root cause) twice in a row → escalate, treat as misspecified, return to P3 and re-decompose.
-3. **Dispute abuse** — super-coder may challenge a false-positive defect *once per task* with file:line evidence. A second dispute halts and escalates.
+3. **Dispute abuse** — pro-coder may challenge a false-positive defect *once per task* with file:line evidence. A second dispute halts and escalates.
 
 A hard cap (e.g. "3 rounds then ship") would let defects through. An infinite loop without stuck-detection would let bad specs spin forever. The combination gives the QA pass real teeth without the risk of livelock.
 
@@ -667,7 +667,7 @@ cd ~/code/claude-skill
 Manual uninstall:
 
 ```bash
-rm -rf ~/.claude/skills/super-coder ~/.claude/bin/lens ~/.claude/bin/.lens.installed.sha
+rm -rf ~/.claude/skills/pro-coder ~/.claude/bin/lens ~/.claude/bin/.lens.installed.sha
 # Then edit ~/.claude.json and remove the "lens" key under "mcpServers".
 ```
 
@@ -689,7 +689,7 @@ Sub-tests (73 assertions total):
 |---|---|
 | `test_canonicalize` (13) | `sc_canonicalize_dest` — absolute / trailing-slash / `..` bypass / `//` collapse / relative against `$PWD` / clamp at root / empty input |
 | `test_safe_dest_guard` (8) | `sc_assert_safe_dest` accepts legitimate paths; rejects HOME / `/` / system paths / `..`-traversal bypasses |
-| `test_orphan_reap` (7) | `uninstall.sh` reaps `.super-coder.staging.*` orphans incl. dry-run, relative-dest, unrelated-dir preservation |
+| `test_orphan_reap` (7) | `uninstall.sh` reaps `.pro-coder.staging.*` orphans incl. dry-run, relative-dest, unrelated-dir preservation |
 | `test_round_trip_copy` (10) | install --copy → assert → uninstall → assert; install + uninstall idempotency |
 | `test_round_trip_symlink` (11) | install --symlink → assert → uninstall → assert; symlink target verification; install + uninstall idempotency |
 | `test_install_extended_flags` (12) | `install.sh --dest=VALUE` and `--quiet` and `--dry-run`; `uninstall.sh --dest=VALUE`; empty `--flag=` rejection |
@@ -702,8 +702,8 @@ The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `
 
 ## Troubleshooting
 
-**`/super-coder` doesn't appear as a slash command in Claude Code.**
-- Confirm `~/.claude/skills/super-coder/SKILL.md` exists and is readable: `ls -la ~/.claude/skills/super-coder/SKILL.md`
+**`/pro-coder` doesn't appear as a slash command in Claude Code.**
+- Confirm `~/.claude/skills/pro-coder/SKILL.md` exists and is readable: `ls -la ~/.claude/skills/pro-coder/SKILL.md`
 - Restart Claude Code — skills are scanned at startup.
 - Run `claude --help` to confirm the CLI version supports skills (you need a recent Claude Code version).
 
@@ -741,7 +741,7 @@ The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `
 - Check the verdicts — if super-qa returns the *same defect* (same `file:line`, same root cause) twice in a row, the skill's stuck-loop detection should fire and escalate to you. If it doesn't, your spec is ambiguous — refine the prompt and start a fresh section.
 
 **`bash scripts/test/round_trip.sh` fails on a fresh clone.**
-- Ensure you're running from the repo root (the script uses `BASH_SOURCE`-derived paths so it tolerates other cwds, but the `${repo_root}/super-coder/SKILL.md` lookup needs the file to exist).
+- Ensure you're running from the repo root (the script uses `BASH_SOURCE`-derived paths so it tolerates other cwds, but the `${repo_root}/pro-coder/SKILL.md` lookup needs the file to exist).
 - Check `cargo` is NOT what's failing — the test passes `--no-lens` to install.sh so cargo isn't invoked. If it does fail with a cargo error, that's a regression; file an issue.
 - Read the failure line — each FAIL prints the expected vs actual so the diagnosis is in the output.
 
@@ -749,13 +749,13 @@ The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `
 
 ## Customisation
 
-The skill is one file (`super-coder/SKILL.md`) — plain Markdown with YAML frontmatter. Fork, edit, reinstall.
+The skill is one file (`pro-coder/SKILL.md`) — plain Markdown with YAML frontmatter. Fork, edit, reinstall.
 
 Common edits:
 
 - **Swap the language defaults** in the Identity section if your stack isn't Rust / Python.
 - **Adjust the section-boundary threshold** (default: 5+ tasks) in the P6 triggers.
-- **Swap `lens` for a different code-graph tool** by find-and-replacing the verbs in `super-coder/SKILL.md` (`lens query`, `lens follow`, `lens . --update`). Pass `--no-lens` to `install.sh` if you have your own tool already on `$PATH`.
+- **Swap `lens` for a different code-graph tool** by find-and-replacing the verbs in `pro-coder/SKILL.md` (`lens query`, `lens follow`, `lens . --update`). Pass `--no-lens` to `install.sh` if you have your own tool already on `$PATH`.
 - **Change the super-qa subagent type** (default: `general-purpose`) if you have a more specific QA agent registered.
 - **Tighten or relax severity tiers** in the P4.5 verdict format.
 
