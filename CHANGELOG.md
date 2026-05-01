@@ -8,6 +8,34 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-01
+
+### Fixed
+- **Rust extractor: `impl Trait for ImportedType` no longer aborts the index.**
+  The extractor synthesised the type-relation owner by prefixing the impl
+  target with the current module path; when the target type was imported
+  from another file (e.g. `impl SellerPlanStore for DataStoreSession`), the
+  resulting owner qname pointed at a phantom symbol and the storage layer
+  rejected the row with "extractor invariant violated", aborting the entire
+  index. Type-relations whose owner is not declared in the same file are
+  now dropped post-walk, since the storage schema requires
+  `types.symbol_id NOT NULL` and the row is unrecoverable.
+- **Rust extractor: methods in distinct trait impls of the same type get
+  distinct qnames.** A file containing `impl InventoryStore for T { fn m() }`
+  and `impl CategoriesStore for T { fn m() }` previously produced two
+  symbols with qname `module::T::m`, hitting the
+  `(file_id, qualified_name)` UNIQUE constraint and aborting the index.
+  Methods inside `impl <Trait> for <Type>` are now scoped under
+  `module::Type::Trait::method`. Inherent impls (`impl T { ... }`) keep
+  the original `module::T::method` shape.
+- These two fixes together let lens index large polyglot Rust+Dart+TS
+  monorepos (e.g. pounze) without `*.rs` exclusions or other workarounds.
+
+### Changed
+- `lens/VENDOR.txt` now records `LOCAL_PATCHES=1` to flag that the
+  vendored copy diverges from upstream `a29f523`. Re-vendor a fresh
+  upstream SHA once these patches land.
+
 ## [0.2.3] - 2026-05-01
 
 ### Fixed

@@ -1,6 +1,8 @@
 //! Rust language extractor. Walks a tree-sitter Rust AST and emits structured
 //! [`ExtractedSymbol`] records, plus refs, calls, imports, and type-relations.
 
+use std::collections::HashSet;
+
 use tree_sitter::Node;
 
 use crate::extract::{
@@ -29,6 +31,16 @@ impl LanguageExtractor for RustExtractor {
         let mut out = ExtractedFile::empty(ctx.relative_path, LanguageId::Rust);
         let scope = Scope::file_root();
         walk(parsed.root_node(), &scope, ctx, parsed.source(), &mut out);
+        // `emit_impl` synthesises the type-relation owner by prefixing the impl
+        // target with the current module path, but the target may be an
+        // imported or otherwise foreign type whose canonical qname lives in
+        // another file. The storage layer requires every type-relation owner
+        // to resolve to a same-file symbol (schema NOT NULL FK), so drop any
+        // relation whose owner wasn't actually declared in this file.
+        let local_qnames: HashSet<&str> =
+            out.symbols.iter().map(|s| s.qualified_name.as_str()).collect();
+        out.type_relations
+            .retain(|t| local_qnames.contains(t.symbol_qualified_name.as_str()));
         out
     }
 
@@ -289,19 +301,36 @@ fn emit_impl(
     let type_name = strip_generics(&node_text(type_node, source));
     let type_qname = build_qname(ctx.module_path, scope.parent_qname.as_deref(), &type_name);
 
+    // For `impl Trait for Foo`, methods are scoped to `Foo::Trait::*` rather
+    // than `Foo::*` so that two traits providing methods of the same name
+    // produce distinct qnames within the same file (Rust disambiguates them
+    // via `<Foo as Trait>::method`, but a single qname column cannot). The
+    // trait part is the trait's last path segment with generics stripped —
+    // unique within a file in practice. Inherent impls (`impl Foo { ... }`)
+    // keep the original `Foo::*` shape.
+    let mut method_parent_qname = type_qname.clone();
     if let Some(trait_node) = node.child_by_field_name("trait") {
         let target_raw = strip_generics(&node_text(trait_node, source));
         out.type_relations.push(ExtractedTypeRel {
             symbol_qualified_name: type_qname.clone(),
             relation: "implements".to_string(),
-            target_raw_name: target_raw,
+            target_raw_name: target_raw.clone(),
             line: (node.start_position().row + 1) as u32,
         });
+        let trait_short = target_raw
+            .rsplit("::")
+            .next()
+            .unwrap_or(&target_raw)
+            .to_string();
+        if !trait_short.is_empty() {
+            method_parent_qname.push_str("::");
+            method_parent_qname.push_str(&trait_short);
+        }
     }
 
     if let Some(body) = node.child_by_field_name("body") {
         let inner = Scope {
-            parent_qname: Some(type_qname),
+            parent_qname: Some(method_parent_qname),
             kind: ScopeKind::Impl,
         };
         walk(body, &inner, ctx, source, out);
@@ -1107,6 +1136,74 @@ impl Tick for Counter {
         assert!(
             rels.contains(&("src::r::Counter", "implements", "Tick")),
             "rels were {rels:?}"
+        );
+    }
+
+    #[test]
+    fn test_rust_drops_implements_relation_when_target_type_is_imported() {
+        // Repro for the pounze `DataStoreSession` bug: when the impl target
+        // type is brought in via `use` (or otherwise not declared in this
+        // file), the synthesised owner qname `<module>::DataStoreSession`
+        // points at a phantom symbol. Prior behaviour emitted the row anyway
+        // and the storage layer aborted the entire index with
+        // "type relation … has unknown owner … extractor invariant violated".
+        // The fix drops the relation post-walk.
+        let src = "\
+use crate::store::DataStoreSession;
+trait SellerPlanStore { fn get(&self); }
+impl SellerPlanStore for DataStoreSession {
+    fn get(&self) {}
+}
+";
+        let out = extract_rust(src, "pounze_api::queries::seller_plan");
+        let implements: Vec<_> = out
+            .type_relations
+            .iter()
+            .filter(|t| t.relation == "implements")
+            .collect();
+        assert!(
+            implements.is_empty(),
+            "expected no implements relation when target is foreign, got {implements:?}"
+        );
+        // Inherited methods are still emitted as symbols so the file stays
+        // navigable; they just have no resolvable parent in this file. The
+        // qname is disambiguated by the trait's short name to keep distinct
+        // trait impls of the same method on the same type from colliding.
+        let qns = qnames(&out);
+        assert!(
+            qns.iter().any(|q| *q
+                == "pounze_api::queries::seller_plan::DataStoreSession::SellerPlanStore::get"),
+            "expected trait-disambiguated method symbol under foreign impl, got {qns:?}"
+        );
+    }
+
+    #[test]
+    fn test_rust_methods_in_distinct_trait_impls_have_distinct_qnames() {
+        // Repro for the pounze `mock_data_store.rs` collision: two trait impls
+        // for the same type, each providing a method named `fetch_hsn_master`.
+        // Rust permits this (disambiguated via `<T as Trait>::m`); the storage
+        // layer enforces a `(file_id, qualified_name)` UNIQUE constraint, so
+        // the extractor MUST produce distinct qnames.
+        let src = "\
+struct DataMockStoreSession;
+trait InventoryStore { fn fetch(&self); }
+trait CategoriesStore { fn fetch(&self); }
+impl InventoryStore for DataMockStoreSession {
+    fn fetch(&self) {}
+}
+impl CategoriesStore for DataMockStoreSession {
+    fn fetch(&self) {}
+}
+";
+        let out = extract_rust(src, "mods::mock");
+        let qns = qnames(&out);
+        assert!(
+            qns.contains(&"mods::mock::DataMockStoreSession::InventoryStore::fetch"),
+            "missing InventoryStore::fetch, got {qns:?}"
+        );
+        assert!(
+            qns.contains(&"mods::mock::DataMockStoreSession::CategoriesStore::fetch"),
+            "missing CategoriesStore::fetch, got {qns:?}"
         );
     }
 

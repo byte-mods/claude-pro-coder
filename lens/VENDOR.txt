@@ -1,1 +1,9 @@
 VENDOR_SHA=a29f523
+LOCAL_PATCHES=1
+# claude-skill v0.2.4 — local fix in crates/lens-core/src/lang/rust.rs
+#   Bug 1: drop type-relations whose owner type is not declared in the
+#          same file (e.g. `impl Trait for ImportedType`).
+#   Bug 2: scope methods inside `impl <Trait> for <Type>` under
+#          `Type::Trait::method` so distinct trait impls of the same
+#          method on the same type produce distinct qnames.
+# Re-vendor a fresh upstream SHA once these land in lens upstream.
