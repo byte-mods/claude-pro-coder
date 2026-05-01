@@ -95,6 +95,8 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-01
+
 ### Added
 - **Java language support in lens.** Added `JavaExtractor` implementing the
   `LanguageExtractor` trait over `tree-sitter-java 0.21`. Extracts classes,
@@ -231,7 +233,8 @@ Initial public release.
 - `--dry-run` on `install.sh` skips the cargo build entirely rather
   than running it in a no-write mode (cargo offers no such mode).
 
-[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sudeep-dasgupta/claude-skill/releases/tag/v0.1.0
