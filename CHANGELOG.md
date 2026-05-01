@@ -6,6 +6,68 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project does not yet adhere to semantic versioning — pre-1.0 releases
 may break compatibility on minor bumps.
 
+## [Unreleased]
+
+## [0.2.3] - 2026-05-01
+
+### Fixed
+- CHANGELOG sections were in inverted order — `[0.2.0]` appeared above `[0.2.2]`
+  and `[0.2.1]`. Reordered to newest-first per Keep a Changelog convention.
+- Stale "Java" reference in the 0.2.0 entry's `### Changed` section — listed
+  Java alongside Ruby and C++ as an unsupported language, but Java has been
+  supported since 0.2.2.
+
+## [0.2.2] - 2026-05-01
+
+### Added
+- **Java language support in lens.** Added `JavaExtractor` implementing the
+  `LanguageExtractor` trait over `tree-sitter-java 0.21`. Extracts classes,
+  interfaces, enums, annotations (with nested declarations), methods,
+  constructors, fields, enum constants, imports (including static and wildcard),
+  and type references. Doc comments (`/** */`) are harvested at index time
+  and surfaced by `lens follow`. Call-site extraction walks method and
+  constructor bodies for `method_invocation` and `new` expressions. 44 tests
+  pass in all configurations.
+
+## [0.2.1] - 2026-05-01
+
+### Added
+- **`/diagram` skill** — generates visual Mermaid architecture flowcharts of
+  the current codebase. Uses lens (`lens map`, `lens query`, `lens follow`,
+  `lens refs`, `lens path`) for symbol-aware structural analysis; falls back
+  to filesystem tools when lens is unavailable. Writes `ARCHITECTURE.md` at
+  the project root, viewable in GitHub, VS Code, or any Mermaid renderer.
+- `install.sh` and `uninstall.sh` now handle multiple skills via a loop over
+  a `skill_names` array. Adding a new skill requires only creating its
+  directory with a `SKILL.md` and appending its name to the array — no
+  script refactoring needed.
+
+- **Dart language support in lens.** Added `DartExtractor` implementing the
+  `LanguageExtractor` trait over `tree-sitter-dart`. Extracts top-level
+  functions, classes, methods, getters, setters, constructors (including
+  factory, const, and named constructors), mixins, enums with constants,
+  extensions, extension types, type aliases (typedefs), imports/exports,
+  and type references. Doc comments (`///`, `/** */`) are harvested at
+  index time and surfaced by `lens follow`.
+- **Dart call-site extraction.** The `DartExtractor` now walks function and
+  constructor bodies for call expressions — bare calls (`greet()`), method
+  chains (`obj.method()`, `a.b.c()`), `new` expressions (`new Point()`),
+  and cascade notation (`obj..a()..b()`). Each call is attributed to its
+  enclosing function or method qualified name, enabling `lens refs` impact
+  analysis for Dart codebases.
+
+### Changed
+- **SKILL.md: mandatory code commenting after QA PASS.** P4 task flow now
+  includes step 6 — comment every function, method, struct, module, and
+  non-trivial logic block with why-comments after super-qa returns PASS.
+  New hard-rule invariant #13 and a pre-response checklist item enforce
+  this. Comments use the language's native doc format so `lens follow`
+  surfaces them; well-commented code lets future AI sessions skip reading
+  function bodies.
+- **README Dart coverage.** Doc-comment extraction now lists Dart alongside
+  Rust (`///` / `/** */`). FAQ answer updated to include Dart. `--version`
+  verify step no longer hardcodes `0.1.0` — references `lens/Cargo.toml:9`.
+
 ## [0.2.0] - 2026-05-01
 
 ### Changed
@@ -82,7 +144,7 @@ may break compatibility on minor bumps.
 
 ### Changed
 - README verify step 3 now sets clearer expectations for projects in
-  unsupported languages (Ruby, Java, C++, etc.) — `lens index` producing
+  unsupported languages (Ruby, C++, etc.) — `lens index` producing
   0 symbols is expected there.
 - README `lens --version` verify step now anchors the expected version to
   `lens/Cargo.toml` workspace version, not a bare hardcoded string.
@@ -92,59 +154,6 @@ may break compatibility on minor bumps.
   renamed skill). This is vendored upstream content pinned at
   `lens/VENDOR.txt` SHA `a29f523` and intentionally not edited in place;
   the known issue is documented in `CLAUDE.md`.
-
-## [Unreleased]
-
-## [0.2.2] - 2026-05-01
-
-### Added
-- **Java language support in lens.** Added `JavaExtractor` implementing the
-  `LanguageExtractor` trait over `tree-sitter-java 0.21`. Extracts classes,
-  interfaces, enums, annotations (with nested declarations), methods,
-  constructors, fields, enum constants, imports (including static and wildcard),
-  and type references. Doc comments (`/** */`) are harvested at index time
-  and surfaced by `lens follow`. Call-site extraction walks method and
-  constructor bodies for `method_invocation` and `new` expressions. 44 tests
-  pass in all configurations.
-
-## [0.2.1] - 2026-05-01
-
-### Added
-- **`/diagram` skill** — generates visual Mermaid architecture flowcharts of
-  the current codebase. Uses lens (`lens map`, `lens query`, `lens follow`,
-  `lens refs`, `lens path`) for symbol-aware structural analysis; falls back
-  to filesystem tools when lens is unavailable. Writes `ARCHITECTURE.md` at
-  the project root, viewable in GitHub, VS Code, or any Mermaid renderer.
-- `install.sh` and `uninstall.sh` now handle multiple skills via a loop over
-  a `skill_names` array. Adding a new skill requires only creating its
-  directory with a `SKILL.md` and appending its name to the array — no
-  script refactoring needed.
-
-- **Dart language support in lens.** Added `DartExtractor` implementing the
-  `LanguageExtractor` trait over `tree-sitter-dart`. Extracts top-level
-  functions, classes, methods, getters, setters, constructors (including
-  factory, const, and named constructors), mixins, enums with constants,
-  extensions, extension types, type aliases (typedefs), imports/exports,
-  and type references. Doc comments (`///`, `/** */`) are harvested at
-  index time and surfaced by `lens follow`.
-- **Dart call-site extraction.** The `DartExtractor` now walks function and
-  constructor bodies for call expressions — bare calls (`greet()`), method
-  chains (`obj.method()`, `a.b.c()`), `new` expressions (`new Point()`),
-  and cascade notation (`obj..a()..b()`). Each call is attributed to its
-  enclosing function or method qualified name, enabling `lens refs` impact
-  analysis for Dart codebases.
-
-### Changed
-- **SKILL.md: mandatory code commenting after QA PASS.** P4 task flow now
-  includes step 6 — comment every function, method, struct, module, and
-  non-trivial logic block with why-comments after super-qa returns PASS.
-  New hard-rule invariant #13 and a pre-response checklist item enforce
-  this. Comments use the language's native doc format so `lens follow`
-  surfaces them; well-commented code lets future AI sessions skip reading
-  function bodies.
-- **README Dart coverage.** Doc-comment extraction now lists Dart alongside
-  Rust (`///` / `/** */`). FAQ answer updated to include Dart. `--version`
-  verify step no longer hardcodes `0.1.0` — references `lens/Cargo.toml:9`.
 
 ## [0.1.0] - 2026-04-29
 
@@ -233,7 +242,8 @@ Initial public release.
 - `--dry-run` on `install.sh` skips the cargo build entirely rather
   than running it in a no-write mode (cargo offers no such mode).
 
-[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.1.0...v0.2.0
