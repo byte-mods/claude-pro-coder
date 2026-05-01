@@ -117,7 +117,8 @@ fn test_composite_rust_python_project_resolves_correctly() {
                 lens_core::LanguageId::TypeScript
                 | lens_core::LanguageId::JavaScript
                 | lens_core::LanguageId::Go
-                | lens_core::LanguageId::Dart => {
+                | lens_core::LanguageId::Dart
+                | lens_core::LanguageId::Java => {
                     // TypeScript / JavaScript / Go each have dedicated unit
                     // tests covering qname-shape contracts. Composite test
                     // does not exercise these languages directly.

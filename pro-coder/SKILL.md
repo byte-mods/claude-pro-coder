@@ -75,7 +75,7 @@ Lens is a symbol-aware index of the project: a SQLite-backed map of definitions,
    - **If absent:** surface once with `> note: lens not found on PATH. Falling back to Read/Grep/Glob for the code-map.` and set the project mode to **fallback**. Do not retry per task.
 2. If lens is present, check `.lens/index.db`:
    - **Missing:** run `lens init` (idempotent — creates `.lens/`, schema, config) then `lens index` (full build). Surface the result line verbatim — e.g. `lens index: wrote 27 files / 569 symbols / 3500 calls`.
-   - **0 symbols indexed** (lens supports Rust + Python + TypeScript/TSX + JavaScript/JSX/MJS/CJS + Go + Dart today; other languages produce an empty index): surface once with `> note: lens indexed 0 symbols (no supported language files detected). Falling back to Read/Grep/Glob for this project.` and set project mode to **fallback**.
+   - **0 symbols indexed** (lens supports Rust + Python + TypeScript/TSX + JavaScript/JSX/MJS/CJS + Go + Dart + Java today; other languages produce an empty index): surface once with `> note: lens indexed 0 symbols (no supported language files detected). Falling back to Read/Grep/Glob for this project.` and set project mode to **fallback**.
    - **Non-empty index:** set project mode to **lens**. Subsequent invocations in this project use `lens update` (incremental) rather than re-indexing.
 
 **Project mode is sticky for the session.** Decide once per session, then proceed without re-checking. Lens-mode and fallback-mode use the same loop; only the tools at P1 and P5 differ.

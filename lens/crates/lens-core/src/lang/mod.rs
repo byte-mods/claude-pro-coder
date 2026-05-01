@@ -6,6 +6,7 @@
 
 pub mod dart;
 pub mod go;
+pub mod java;
 pub mod javascript;
 pub mod python;
 pub mod registry;
@@ -16,6 +17,7 @@ use std::fmt;
 
 pub use dart::DartExtractor;
 pub use go::GoExtractor;
+pub use java::JavaExtractor;
 pub use javascript::JavaScriptExtractor;
 pub use python::PythonExtractor;
 pub use registry::Registry;
@@ -33,6 +35,7 @@ pub enum LanguageId {
     JavaScript,
     Go,
     Dart,
+    Java,
 }
 
 impl LanguageId {
@@ -44,6 +47,7 @@ impl LanguageId {
             LanguageId::JavaScript => "javascript",
             LanguageId::Go => "go",
             LanguageId::Dart => "dart",
+            LanguageId::Java => "java",
         }
     }
 
@@ -55,6 +59,7 @@ impl LanguageId {
             LanguageId::JavaScript,
             LanguageId::Go,
             LanguageId::Dart,
+            LanguageId::Java,
         ]
     }
 
@@ -66,6 +71,7 @@ impl LanguageId {
             "javascript" => Some(LanguageId::JavaScript),
             "go" => Some(LanguageId::Go),
             "dart" => Some(LanguageId::Dart),
+            "java" => Some(LanguageId::Java),
             _ => None,
         }
     }

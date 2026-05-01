@@ -95,6 +95,16 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+### Added
+- **Java language support in lens.** Added `JavaExtractor` implementing the
+  `LanguageExtractor` trait over `tree-sitter-java 0.21`. Extracts classes,
+  interfaces, enums, annotations (with nested declarations), methods,
+  constructors, fields, enum constants, imports (including static and wildcard),
+  and type references. Doc comments (`/** */`) are harvested at index time
+  and surfaced by `lens follow`. Call-site extraction walks method and
+  constructor bodies for `method_invocation` and `new` expressions. 44 tests
+  pass in all configurations.
+
 ## [0.2.1] - 2026-05-01
 
 ### Added

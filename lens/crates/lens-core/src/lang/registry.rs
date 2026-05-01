@@ -43,6 +43,7 @@ impl Registry {
         r.register(Arc::new(super::javascript::JavaScriptExtractor::jsx()));
         r.register(Arc::new(super::go::GoExtractor::new()));
         r.register(Arc::new(super::dart::DartExtractor::new()));
+        r.register(Arc::new(super::java::JavaExtractor::new()));
         r
     }
 
@@ -175,12 +176,13 @@ mod tests {
     fn test_lang_registry_with_default_languages_lists_all_languages_sorted() {
         let r = Registry::with_default_languages();
         // `supported_languages` sorts by `as_str()` — alphabetical:
-        // "dart" < "go" < "javascript" < "python" < "rust" < "typescript".
+        // "dart" < "go" < "java" < "javascript" < "python" < "rust" < "typescript".
         assert_eq!(
             r.supported_languages(),
             vec![
                 LanguageId::Dart,
                 LanguageId::Go,
+                LanguageId::Java,
                 LanguageId::JavaScript,
                 LanguageId::Python,
                 LanguageId::Rust,
