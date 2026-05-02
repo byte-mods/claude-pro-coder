@@ -16,3 +16,7 @@ lens/**/*.rs.bk
 # lens/VENDOR.txt rather than committing them.
 lens/**/graphify-out/
 .lens/
+
+# All Markdown files — user request
+tmp/
+*.md

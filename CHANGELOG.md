@@ -8,6 +8,17 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-03
+
+### Added
+- **C# language support in lens.** `lens` now indexes `.cs` files via
+  `tree-sitter-c-sharp`. Extracts: namespaces, classes, structs, interfaces,
+  enums, delegates, methods, constructors, properties, fields, events;
+  `using` imports; base-list `extends` relations; calls and type refs.
+  Symbols are scoped under namespace + type parent with `::` separator.
+- **`.gitignore` now covers `*.md`.** All Markdown files are ignored by
+  default; tracked `.md` files can still be staged explicitly.
+
 ## [0.2.4] - 2026-05-01
 
 ### Fixed
