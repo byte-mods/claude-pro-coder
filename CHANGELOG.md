@@ -8,6 +8,33 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-03
+
+### Changed
+- **`pro-coder/SKILL.md`: lens-first is now a precedence rule, not a
+  preference.** Tightened the P1 tooling guidance to explicitly require
+  that the *first* code-comprehension call in lens-mode projects go to
+  `lens query` / `lens follow` / `lens refs` / `lens path`, not to
+  `Grep` or `Read` on a code symbol. Read is reserved for full-file
+  context (e.g. immediately before editing); Grep is reserved for
+  literal strings (config keys, error messages, TODO markers). Closes
+  the silent drift toward built-in tools that the protocol previously
+  only nudged against.
+- **Pre-response checklist: lens-first guard at the decision point.**
+  Added an explicit P1 checklist line — *"If P1 and lens mode: was the
+  first code-comprehension call a lens command? If the first reach was
+  Grep or Read on a code symbol, you drifted — restart with lens."* —
+  so the discipline gets verified before every response, not just
+  described in prose.
+- **Pre-response checklist: per-task `schema.txt` verification for
+  database projects.** Added a new line that fires at task close:
+  *"If P4 task complete and database project and this task
+  added/removed/renamed/re-typed any table, column, index, or constraint:
+  was `schema.txt` appended in the same task, before the `.history/`
+  snapshot?"* Previously, schema.txt was only verified at section close
+  (P5); per-task verification keeps the archived `.history/` snapshot
+  consistent with the schema state it claims to capture.
+
 ## [0.2.5] - 2026-05-03
 
 ### Added

@@ -122,7 +122,7 @@ Work is grouped into **Sections** — a section is one cohesive unit of work, ty
 | Minimal context around a `file:line` | `lens slice <file>:<line> --budget 1500` | `Read` with `offset`/`limit` |
 | Architecture summary of project / sub-tree | `lens map --depth 2 [--scope src]` | manual `ls -R` + `Read` |
 
-Prefer `lens` calls in lens mode — they are budget-capped and symbol-aware, so each call returns a tight slice instead of a whole file. Use `Read` only when you need the *full* contents of a specific file (e.g. before editing it). Lens caps responses by token budget so a single `follow` on a 2000-line file returns ~1500 tokens, not 50000.
+**Lens-first in lens mode — this is a precedence rule, not a preference.** When the active question is "what does this symbol mean / who calls it / how do these two areas connect," the *first* tool call is `lens query` / `lens follow` / `lens refs` / `lens path` — not `Grep`, not `Read`. Grep returns string matches with no symbol semantics; Read pulls a whole file when you needed one function. Reach for `Read` only when you genuinely need the *full* contents of a specific file (e.g. immediately before editing it, or when lens has already pointed you at the right file and you need the surrounding context). Reach for `Grep` only when the target is a literal string (a config key, an error message, a TODO marker), not a symbol. Lens caps responses by token budget — a single `follow` on a 2000-line file returns ~1500 tokens, not 50000 — so the cost asymmetry matters: a habitual Grep on a code symbol burns budget you'd otherwise spend on more comprehension.
 
 **Doc comments are surfaced first.** `lens follow` extracts the leading doc comment (Rust `///`, Python docstring, JSDoc, Go `//`) at index time and prints it as a `> blockquote` ahead of the signature/body. For well-documented code, reading the doc is often enough — Claude can skip the body entirely.
 
@@ -511,7 +511,8 @@ Anything ambiguous is **not** trivial. When in doubt, full loop.
 - [ ] If P1 and `CLAUDE.md` exists: was it read?
 - [ ] If P1 and database project: was `schema.txt` read (if it exists)?
 - [ ] If P1 and `.claude/state/current_section.md` exists: was it read?
-- [ ] If P1: relevant code-map notes loaded **and** verified against current source via Read/Grep/Glob?
+- [ ] If P1 and lens mode: was the *first* code-comprehension call a `lens` command (`query`/`follow`/`refs`/`path`/`slice`/`map`)? If the first reach was `Grep` or `Read` on a code symbol, you drifted — restart with lens.
+- [ ] If P1: relevant code-map notes loaded **and** verified against current source — via `lens follow`/`lens refs` in lens mode, `Read`/`Grep`/`Glob` in fallback mode?
 - [ ] If P5: code-map updated under `.claude/state/code-map/` for every area touched, with file:line anchors? In lens mode, `lens . --update` run?
 - [ ] If P5: `README.md` updated with current endpoints/architecture/project state?
 - [ ] If P5 and database project: `schema.txt` updated for any schema changes this section?
@@ -521,6 +522,7 @@ Anything ambiguous is **not** trivial. When in doubt, full loop.
 - [ ] If a task was just completed: super-qa spawned and `VERDICT: PASS` (zero BLOCKER, zero MAJOR) received? If not — do not mark task done.
 - [ ] If a task just achieved QA PASS: were new/changed functions, structs, and non-trivial blocks commented with why-comments before marking complete? If not — add them now.
 - [ ] If P4 task complete: changed files archived to `.history/<date>/`?
+- [ ] If P4 task complete and database project and this task added/removed/renamed/re-typed any table, column, index, or constraint: was `schema.txt` appended **in the same task**, before the `.history/` snapshot?
 - [ ] If P5: section-level super-qa pass spawned and PASS received before announcing audit complete?
 - [ ] Any `unwrap()` / `expect()` / `panic!()` introduced? If yes — fix or justify inline.
 - [ ] Trailing recap of what you just did? If yes — delete before sending. *(Exception: the three mandated summaries — plan presentation, task close, section close — must use the "Output for the user" format with a `What changed` table, plain English, no protocol jargon, no `file:line` citations, no `BLOCKER`/`MAJOR`/`MINOR`/`code-map`/`P1`–`P6` words inside the user-facing block.)*
