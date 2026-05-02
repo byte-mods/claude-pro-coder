@@ -20,10 +20,15 @@ Before the first P1 in any project, ensure infrastructure exists. Skip silently 
 If `.claude/state/` does not exist:
 
 ```bash
-mkdir -p .claude/state .claude/state/code-map
+mkdir -p .claude/state .claude/state/code-map .history
 ```
 
-No prompt needed. Idempotent. Required for P6 snapshots and for the project code-map.
+No prompt needed. Idempotent. Required for P6 snapshots, the code-map, and the file-history archive.
+
+**`.history/` rules:**
+- Write-only archive. Never read from `.history/` unless explicitly instructed by the user.
+- Changed files are copied here at task close (P4 step 8) with their original relative path preserved under a date folder: `.history/YYYY-MM-DD/<relative-path>`.
+- Never add `.history/` to `.gitignore` automatically; the user decides.
 
 ### Step 2 — gitignore policy *(ask-once)*
 
@@ -65,6 +70,12 @@ If `.claude/state/code-map/` is empty (no notes yet), this is normal on first in
 
 If notes exist, treat them as **claims about the past**, not ground truth. Verify any note against current code before relying on it (same rule as agent memory).
 
+### Step 1b — Database schema file
+
+If the project involves a database (detect via existing `schema.txt`, `migrations/`, `*model*`, `*schema*`, `prisma/`, `db/`, `sql/`, or similar at project root), ensure `schema.txt` exists at project root. If missing, surface once during the first P1 with `> note: database detected but schema.txt missing. Will create on first schema change.` and proceed.
+
+`schema.txt` is a human-readable, plain-text record of the current database schema (tables, fields, types, indexes, constraints). It is read at P1 and updated whenever a task adds, removes, or renames fields/tables.
+
 ### Step 5 — Lens index *(symbol-aware code map)*
 
 Lens is a symbol-aware index of the project: a SQLite-backed map of definitions, references, calls, imports, and type relationships. P1 uses `lens query`/`lens follow` to pull minimal slices instead of reading whole files; P5 keeps the index fresh with `lens . --update`. The index lives at `.lens/index.db` and is project-local.
@@ -93,6 +104,7 @@ Work is grouped into **Sections** — a section is one cohesive unit of work, ty
 1. Run bootstrap if not already done this project (state dir, gitignore policy marker, CLAUDE.md check, code-map dir, lens index).
 2. Restate the objective in your own words. Surface clarifying questions only when the request has multiple valid interpretations.
 3. Read `CLAUDE.md` (if exists) and `.claude/state/current_section.md` (if exists). The first is project contract; the second carries forward state from prior sections.
+   - Also read `schema.txt` (if exists) when the project involves a database. Treat it as part of the blast-radius code-map.
 4. **Build the blast-radius code-map for this task.** Identify the modules, files, and symbols implicated by the request. For each, read any existing note under `.claude/state/code-map/` whose scope overlaps. Then **use lens (or Read/Grep/Glob in fallback mode) to verify those notes against current code and extend coverage to anything not yet documented**. The code-map is a living artifact — stale notes get corrected at P5; gaps get filled at P5. P1's job is to enter the section with an accurate mental model grounded in current source.
 5. Verify any agent-memory entry naming a path/symbol/flag by grepping for it (or `lens follow <symbol>` in lens mode). Stale memory is worse than none.
 
@@ -158,7 +170,9 @@ For each task `Ti`:
 4. Run the full suite. If a pre-existing test breaks, **stop** — do not modify the test. The regression is in the new code.
 5. **Hand off to super-qa** *(see P4.5 — mandatory)*. Iterate until super-qa returns `VERDICT: PASS`.
 6. **Comment the code.** After QA PASS, add concise why-comments to every function, method, struct, module, and non-trivial logic block written or changed in this task. Explain: invariants upheld, edge cases handled, non-obvious design decisions, and any constraints the code assumes but does not enforce. Use the language's idiomatic doc format (Rust `///`, Python docstrings, JSDoc `/** */`, Go `//`). For dense algorithmic passages, add inline comments explaining the strategy — not what each line does, but why this approach was chosen and what preconditions hold at each step. The audience is a developer (human or AI) reading this code cold six months from now: they should understand the logic without reconstructing your reasoning.
-7. Mark `Ti` complete. Advance.
+7. **Archive changed files to `.history/`.** For every file modified in this task, copy its final post-task state to `.history/<ISO-date>/<relative-path>` (e.g. `.history/2026-05-03/src/models/user.py`). Preserve relative directory structure. This is a write-only audit trail — never read from `.history/` unless the user explicitly asks.
+8. **Update `schema.txt` if database schema changed.** If this task added, removed, renamed, or re-typed any table, column, index, or constraint, append a dated entry to `schema.txt` reflecting the current schema. If `schema.txt` did not exist, create it at project root.
+9. Mark `Ti` complete. Advance.
 
 Never carry a half-implemented task forward.
 
@@ -262,7 +276,8 @@ Reply in under 500 words.
 
    **In lens mode, also run `lens . --update`** (incremental — re-extracts only changed files) so the symbol index reflects the section's diff. The `.lens/index.db` is what powers the next P1's `lens query`/`lens follow` calls; stale indexes mean P1 reads stale slices. In fallback mode this step is a no-op.
 6. Mark all section tasks `[x]`. Produce a **user-facing closure summary** using the format in the "Output for the user" section — clean headline, `What changed` table, `Why it matters`, `Tests`, and `What's next` if anything is deferred. Internal closure detail (≤5-bullet technical recap) goes into the snapshot at P6, not into the user-facing block.
-7. Update agent memory only for non-obvious architectural patterns, performance constraints, or stakeholder context. **Never save code-derivable facts to agent memory** — those go in the code-map.
+7. **Update `README.md` with project state.** If `README.md` exists, update it with the current architecture overview, endpoint list (if applicable), and any materially changed project facts surfaced during this section. If it does not exist, create it with a concise project summary. Preserve any human-written narrative sections; only update factual/structural blocks (endpoints, architecture diagrams, setup steps).
+8. Update agent memory only for non-obvious architectural patterns, performance constraints, or stakeholder context. **Never save code-derivable facts to agent memory** — those go in the code-map.
 
 **Code-map note format** *(one file per area; filename is `<area-slug>.md`, e.g. `runtime-scheduler.md`, `payments-pipeline.md`, `wire-protocol.md`)*:
 
@@ -482,24 +497,30 @@ Anything ambiguous is **not** trivial. When in doubt, full loop.
 10. No `Mutex` on declared hot paths — lock-free, sharded, or atomic.
 11. Match existing project style; surrounding code is the style guide.
 12. One concern per task. If it grows, split.
-13. **Comment new code after QA PASS.** Every function, method, struct, module, and non-trivial logic block carries a why-comment — invariants upheld, edge cases handled, non-obvious design decisions, and constraints assumed. Dense algorithmic passages get inline strategy comments explaining the approach and preconditions. Use the language's native doc format (Rust `///`, Python docstrings, JSDoc, Go `//`). **No what-comments** — the code already says what. The audience is a developer reading cold six months from now, human or AI. Doc comments are extracted by `lens follow` at index time; well-commented code lets future AI sessions skip reading function bodies.
-14. No incidental trailing recaps after every response. **The three mandated user-facing summaries** (P3 plan presentation, P4.5 task close when awaited, P6 section boundary) are exempt — they follow the "Output for the user" format. Anything outside those three is "the user reads the diff."
+13. **Maintain `schema.txt` for database projects.** Read it at P1; update it whenever fields, tables, indexes, or constraints change. If missing on first database touch, create it.
+14. **Archive every changed file to `.history/YYYY-MM-DD/<path>` at task close.** Write-only; never read back unless explicitly asked by the user.
+15. **Update `README.md` at section close (P5)** with current endpoints, architecture, and project facts.
+16. No incidental trailing recaps after every response. **The three mandated user-facing summaries** (P3 plan presentation, P4.5 task close when awaited, P6 section boundary) are exempt — they follow the "Output for the user" format. Anything outside those three is "the user reads the diff."
 
 ---
 
 ## Pre-response checklist *(run silently before sending every response)*
 
 - [ ] Active phase declared at the top of the response?
-- [ ] If first invocation in this project: bootstrap done (state dir, code-map dir, gitignore policy marker, lens index decided)?
+- [ ] If first invocation in this project: bootstrap done (state dir, code-map dir, `.history/`, gitignore policy marker, lens index decided)?
 - [ ] If P1 and `CLAUDE.md` exists: was it read?
+- [ ] If P1 and database project: was `schema.txt` read (if it exists)?
 - [ ] If P1 and `.claude/state/current_section.md` exists: was it read?
 - [ ] If P1: relevant code-map notes loaded **and** verified against current source via Read/Grep/Glob?
 - [ ] If P5: code-map updated under `.claude/state/code-map/` for every area touched, with file:line anchors? In lens mode, `lens . --update` run?
+- [ ] If P5: `README.md` updated with current endpoints/architecture/project state?
+- [ ] If P5 and database project: `schema.txt` updated for any schema changes this section?
 - [ ] If P6: snapshot written to disk (including "Code-map updates this section") before announcing boundary?
 - [ ] Any direct write to `CLAUDE.md` attempted? If yes — **stop, reroute to proposals queue.**
 - [ ] If implementing: tests written **and** the suite was run?
 - [ ] If a task was just completed: super-qa spawned and `VERDICT: PASS` (zero BLOCKER, zero MAJOR) received? If not — do not mark task done.
 - [ ] If a task just achieved QA PASS: were new/changed functions, structs, and non-trivial blocks commented with why-comments before marking complete? If not — add them now.
+- [ ] If P4 task complete: changed files archived to `.history/<date>/`?
 - [ ] If P5: section-level super-qa pass spawned and PASS received before announcing audit complete?
 - [ ] Any `unwrap()` / `expect()` / `panic!()` introduced? If yes — fix or justify inline.
 - [ ] Trailing recap of what you just did? If yes — delete before sending. *(Exception: the three mandated summaries — plan presentation, task close, section close — must use the "Output for the user" format with a `What changed` table, plain English, no protocol jargon, no `file:line` citations, no `BLOCKER`/`MAJOR`/`MINOR`/`code-map`/`P1`–`P6` words inside the user-facing block.)*
