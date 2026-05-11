@@ -30,6 +30,38 @@ No prompt needed. Idempotent. Required for P6 snapshots, the code-map, and the f
 - Changed files are copied here at task close (P4 step 8) with their original relative path preserved under a date folder: `.history/YYYY-MM-DD/<relative-path>`.
 - Never add `.history/` to `.gitignore` automatically; the user decides.
 
+**`current-tasks.md` — single source of truth for in-flight work.**
+
+Also check for `current-tasks.md` at the project root. If it does not exist, create it with this header:
+
+```markdown
+# Current Tasks
+
+_Single source of truth for in-flight work. Updated by the agent before starting and after completing every task. Read this first to see what is in progress, what is queued, and what is done._
+
+## In progress
+
+_(none)_
+
+## Queued
+
+_(none)_
+
+## Completed (this session)
+
+_(none)_
+```
+
+**Lifecycle rules for `current-tasks.md` — non-negotiable:**
+
+1. **Read first.** At P1 of every invocation, read `current-tasks.md` before anything else. It is the authoritative record of where work was left off — if a prior session crashed or the user returned days later, this file tells the agent what is in flight without re-deriving from code or git history.
+2. **Update before starting a task.** Before executing any task in P4 (or before presenting a plan in P3 that introduces new tasks), append the new tasks to `## Queued`, then move the task being started to `## In progress` with an ISO timestamp: `- [T<n>] <one-line goal> — started <ISO timestamp>`.
+3. **Update after completing a task.** Immediately after a task achieves `VERDICT: PASS` from super-qa (P4.5), move the entry from `## In progress` to `## Completed (this session)` with a completion timestamp and a one-line outcome: `- [T<n>] <one-line goal> — completed <ISO timestamp> — <outcome>`.
+4. **Plan-level entries.** When P3 produces a multi-task plan, append every task in the plan to `## Queued` in dependency order before starting T1. As each task advances, move it through the sections.
+5. **Section close (P6).** At section boundary, sweep `## Completed (this session)` into the section snapshot, then reset `## Completed (this session)` to `_(none)_`. Leave `## Queued` intact for the next session — that is exactly what the next session needs to resume.
+6. **Never delete entries from `## Queued`** without recording them in `## Completed` or explicitly noting cancellation (`— cancelled <ISO timestamp> — <reason>`). The file is a ledger, not scratch space.
+7. **Plain English.** Entries are user-readable — no protocol jargon, no `BLOCKER`/`MAJOR`, no `file:line` anchors. Those belong in the snapshot.
+
 ### Step 2 — gitignore policy *(ask-once)*
 
 Check `.claude/state/gitignore_policy` — a one-line marker file recording the user's choice for this project.
@@ -105,6 +137,7 @@ Work is grouped into **Sections** — a section is one cohesive unit of work, ty
 2. Restate the objective in your own words. Surface clarifying questions only when the request has multiple valid interpretations.
 3. Read `CLAUDE.md` (if exists) and `.claude/state/current_section.md` (if exists). The first is project contract; the second carries forward state from prior sections.
    - Also read `schema.txt` (if exists) when the project involves a database. Treat it as part of the blast-radius code-map.
+   - **Read `current-tasks.md` (always — created at bootstrap if missing).** This is the authoritative record of in-flight work. Any task in `## In progress` from a prior session must be reconciled with the current request: resume it, supersede it explicitly, or mark it cancelled. Any task in `## Queued` from a prior session is still pending unless the user says otherwise.
 4. **Build the blast-radius code-map for this task.** Identify the modules, files, and symbols implicated by the request. For each, read any existing note under `.claude/state/code-map/` whose scope overlaps. Then **use lens (or Read/Grep/Glob in fallback mode) to verify those notes against current code and extend coverage to anything not yet documented**. The code-map is a living artifact — stale notes get corrected at P5; gaps get filled at P5. P1's job is to enter the section with an accurate mental model grounded in current source.
 5. Verify any agent-memory entry naming a path/symbol/flag by grepping for it (or `lens follow <symbol>` in lens mode). Stale memory is worse than none.
 
@@ -164,6 +197,7 @@ In those cases, **present the plan to the user via the "Output for the user" for
 
 For each task `Ti`:
 
+0. **Update `current-tasks.md` — move `Ti` from `## Queued` to `## In progress` with start timestamp.** Do this before writing any code. This is the ledger that lets a future session pick up where you left off.
 1. Implement. Idiomatic, terse, indistinguishable from surrounding code.
 2. Mental compile: lifetimes resolve, trait bounds satisfied, no deadlock from lock ordering, no hot-path allocs, no `unwrap`/`expect`/`panic!` on production paths.
 3. Write tests in the **same task**. Naming: `test_<component>_<scenario>_<expected_behavior>`. Cover happy path, edges, errors, concurrency where applicable.
@@ -172,7 +206,8 @@ For each task `Ti`:
 6. **Comment the code.** After QA PASS, add concise why-comments to every function, method, struct, module, and non-trivial logic block written or changed in this task. Explain: invariants upheld, edge cases handled, non-obvious design decisions, and any constraints the code assumes but does not enforce. Use the language's idiomatic doc format (Rust `///`, Python docstrings, JSDoc `/** */`, Go `//`). For dense algorithmic passages, add inline comments explaining the strategy — not what each line does, but why this approach was chosen and what preconditions hold at each step. The audience is a developer (human or AI) reading this code cold six months from now: they should understand the logic without reconstructing your reasoning.
 7. **Archive changed files to `.history/`.** For every file modified in this task, copy its final post-task state to `.history/<ISO-date>/<relative-path>` (e.g. `.history/2026-05-03/src/models/user.py`). Preserve relative directory structure. This is a write-only audit trail — never read from `.history/` unless the user explicitly asks.
 8. **Update `schema.txt` if database schema changed.** If this task added, removed, renamed, or re-typed any table, column, index, or constraint, append a dated entry to `schema.txt` reflecting the current schema. If `schema.txt` did not exist, create it at project root.
-9. Mark `Ti` complete. Advance.
+9. **Update `current-tasks.md` — move `Ti` from `## In progress` to `## Completed (this session)` with completion timestamp and a one-line outcome.**
+10. Mark `Ti` complete. Advance.
 
 Never carry a half-implemented task forward.
 
@@ -498,9 +533,10 @@ Anything ambiguous is **not** trivial. When in doubt, full loop.
 11. Match existing project style; surrounding code is the style guide.
 12. One concern per task. If it grows, split.
 13. **Maintain `schema.txt` for database projects.** Read it at P1; update it whenever fields, tables, indexes, or constraints change. If missing on first database touch, create it.
-14. **Archive every changed file to `.history/YYYY-MM-DD/<path>` at task close.** Write-only; never read back unless explicitly asked by the user.
-15. **Update `README.md` at section close (P5)** with current endpoints, architecture, and project facts.
-16. No incidental trailing recaps after every response. **The three mandated user-facing summaries** (P3 plan presentation, P4.5 task close when awaited, P6 section boundary) are exempt — they follow the "Output for the user" format. Anything outside those three is "the user reads the diff."
+14. **Maintain `current-tasks.md` as the single source of truth for in-flight work.** Created at bootstrap. Read at P1. Updated before starting any task (queued → in progress) and immediately after super-qa PASS (in progress → completed). Swept at P6. This file is what lets the user return after any gap and see exactly what is in flight without asking the agent to re-derive state.
+15. **Archive every changed file to `.history/YYYY-MM-DD/<path>` at task close.** Write-only; never read back unless explicitly asked by the user.
+16. **Update `README.md` at section close (P5)** with current endpoints, architecture, and project facts.
+17. No incidental trailing recaps after every response. **The three mandated user-facing summaries** (P3 plan presentation, P4.5 task close when awaited, P6 section boundary) are exempt — they follow the "Output for the user" format. Anything outside those three is "the user reads the diff."
 
 ---
 
@@ -511,6 +547,9 @@ Anything ambiguous is **not** trivial. When in doubt, full loop.
 - [ ] If P1 and `CLAUDE.md` exists: was it read?
 - [ ] If P1 and database project: was `schema.txt` read (if it exists)?
 - [ ] If P1 and `.claude/state/current_section.md` exists: was it read?
+- [ ] If P1: was `current-tasks.md` read (and created at bootstrap if it was missing)? Any in-flight tasks from a prior session reconciled with the current request?
+- [ ] If starting a task: was `current-tasks.md` updated to move it from `## Queued` to `## In progress` *before* implementation began?
+- [ ] If a task just achieved QA PASS: was `current-tasks.md` updated to move it from `## In progress` to `## Completed (this session)` with a one-line outcome?
 - [ ] If P1 and lens mode: was the *first* code-comprehension call a `lens` command (`query`/`follow`/`refs`/`path`/`slice`/`map`)? If the first reach was `Grep` or `Read` on a code symbol, you drifted — restart with lens.
 - [ ] If P1: relevant code-map notes loaded **and** verified against current source — via `lens follow`/`lens refs` in lens mode, `Read`/`Grep`/`Glob` in fallback mode?
 - [ ] If P5: code-map updated under `.claude/state/code-map/` for every area touched, with file:line anchors? In lens mode, `lens . --update` run?
