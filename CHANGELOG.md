@@ -8,6 +8,54 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-17
+
+### BREAKING
+- **Lens is now required.** v6 of the pro-coder protocol removes the
+  `Read`/`Grep`/`Glob` fallback mode entirely. The skill aborts at
+  bootstrap with an install pointer if the `lens` binary is not on
+  `$PATH`. Rationale: fallback was a strictly worse code-comprehension
+  strategy and the agent would silently degrade to it on machines
+  where the install had failed, producing protocol-compliant-looking
+  output backed by stale or shallow context. Existing users on
+  machines without lens must run `./scripts/install.sh` (or
+  `./scripts/install-lens.sh` directly) to enable the skill after
+  upgrading. The `--no-lens` install flag still exists as a build-time
+  escape hatch but the resulting installation will refuse to run at
+  first invocation.
+
+### Added
+- **Chain-of-thought is now mandatory and visible at every task and
+  every super-qa spawn.** Three new visible blocks are required:
+  (1) `**Chain-of-thought (T<n>):**` before any code is written in
+  P4 — goal, files implicated, edge cases, failure modes, verification
+  approach, out-of-scope; (2) `**Super-qa briefing (T<n>):**` before
+  every P4.5 spawn — requirements, files in diff, tests, budgets,
+  task-specific adversarial probes, gotchas; (3) `**Super-qa
+  chain-of-thought:**` emitted by the subagent before its verdict —
+  requirements as it reads them, what the diff does per requirement,
+  divergence points, edge-case plan, what would change the verdict.
+  Section-level super-qa (P5) gets parallel briefing + CoT blocks.
+  Internal `<thinking>` is not sufficient; the user must see what
+  the agent is about to do before it does it. Fast-path tasks collapse
+  the pre-implementation CoT to a single `> fast-path: <reason>` line.
+
+### Changed
+- **`.history/` and `current-tasks.md` are re-verified at every P1**,
+  not just bootstrap. They are load-bearing artifacts and can be
+  deleted between sessions (fresh checkouts, `git clean`, accidental
+  removal); P1 now creates them if missing and **aborts the loop**
+  with an explicit error if creation fails (permission denied,
+  read-only FS, disk full). The skill will not proceed on a
+  half-bootstrapped tree. Existing projects already pass the
+  re-verification cleanly; the change is defence in depth, not new
+  policy.
+- **Hard rules grew from 17 to 18**, and Drift anchors from 8 to 9,
+  to encode the new illustration requirement.
+- **README, install.sh, and the FAQ rewritten** to reflect lens-
+  required policy. The "Auto-fallback" feature row has been replaced
+  with "Lens-required" and "Chain-of-thought enforcement" rows.
+
 ## [0.2.6] - 2026-05-03
 
 ### Changed

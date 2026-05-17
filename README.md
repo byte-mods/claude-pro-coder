@@ -66,7 +66,8 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 | **Persistent code-map** | Per-area Markdown notes under `<project>/.claude/state/code-map/` capturing API shapes, invariants, callers, gotchas with `file:line` anchors. Survives across sessions; reconciled at every section close. | `<project>/.claude/state/code-map/*.md` |
 | **Section snapshots** | At each section boundary (5+ tasks or explicit `section boundary` keyword), the agent writes a structured snapshot of verified facts, open invariants, and the next-section blast radius — then stops. The next session resumes from the snapshot, not from a stale conversation tail. | `<project>/.claude/state/current_section.md` |
 | **CLAUDE.md proposal queue** | The agent never writes to `CLAUDE.md`. Suggested project-contract additions are appended (with file:line justification + confidence) to `<project>/.claude/state/claude_md_proposals.md` for your review. | `<project>/.claude/state/claude_md_proposals.md` |
-| **Auto-fallback** | If lens isn't on `$PATH` or the project has no supported language files (lens supports Rust, Python, TypeScript, JavaScript, Go, Dart, Java, C#), the skill detects this once at bootstrap and swaps `lens query`/`lens follow` for `Read`/`Grep`/`Glob`. The loop still runs end-to-end. | bootstrap step 5 in `SKILL.md` |
+| **Chain-of-thought enforcement** | Before any task is implemented, pro-coder emits a visible `**Chain-of-thought (T<n>):**` block in the conversation walking through the goal, files implicated, edge cases, failure modes, and verification approach. Before every super-qa spawn (task-level and section-level), it emits a visible `**Super-qa briefing:**` block listing exactly what the reviewer should verify. Super-qa itself emits a visible CoT block before its verdict. Internal `<thinking>` is not enough — the user sees what the agent is about to do, before it does it. | `pro-coder/SKILL.md` (P4 step 0a, P4.5, P5) |
+| **Lens-required** | Lens is mandatory. The skill aborts at bootstrap if the `lens` binary is not on `$PATH`. There is no fallback mode. (Lens supports Rust, Python, TypeScript, JavaScript, Go, Dart, Java, C# — on unsupported-language projects the index is empty and lens calls return nothing useful, but the skill still runs because lens *is* installed.) | bootstrap step 5 in `SKILL.md` |
 | **Token meter** | `lens meter` keeps a persistent input/output token tally across `/clear`s and sessions. `--diff` since last call, `--since 1h`, `--json` for scripts. | lens binary |
 | **Idempotent install + atomic file ops** | `install.sh` re-runs are no-ops when source matches dest (SKILL.md byte-equality + lens source-hash). Copy mode stages into a sibling tmp dir then `mv` (same-FS atomic). Symlink mode replaces real dirs explicitly. Uninstall reaps orphan staging dirs from interrupted prior installs. | `scripts/install.sh`, `scripts/uninstall.sh`, `scripts/_lib.sh` |
 | **Safe-dest guard** | All destructive operations refuse to run on `/`, `$HOME`, or any system path (`/etc`, `/var`, `/usr`, `/private`, `/Applications`, `/Network`, `/Volumes`, `/System`, `/Library`, `/opt`, `/boot`, `/dev`, `/proc`, `/sys`, `/bin`, `/sbin`, `/home`, `/root`, `/srv`, `/run`, `/lib`, `/lib64`, `/mnt`, `/media`). Paths are canonicalised first — `..`-traversal bypasses (e.g. `--dest ~/skills/../../../etc`) trip the guard. | `scripts/_lib.sh` |
@@ -80,14 +81,14 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 |---|---|---|
 | ✅ Always | **Claude Code CLI** (`claude` command) | [Anthropic install docs](https://docs.anthropic.com/en/docs/claude-code/quickstart) |
 | ✅ Always | **bash 3.2+** and **git** | Default on macOS / most Linux |
-| ⚠️ Recommended | **Rust toolchain** (`cargo` on `$PATH`) — needed to build the bundled `lens` binary | [rustup.rs](https://rustup.rs) one-liner: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| ✅ Always | **Rust toolchain** (`cargo` on `$PATH`) — needed to build the bundled `lens` binary. **Lens is required by the skill in v6 — there is no fallback mode.** | [rustup.rs](https://rustup.rs) one-liner: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | ⚠️ Recommended | **Python 3** (`python3` on `$PATH`) — used by `install-mcp.sh` for safe JSON surgery on `~/.claude.json` | Default on macOS / most Linux |
 
-**If `cargo` is missing:** `install-lens.sh` prints a warning and exits 0 (skill installs without lens; `install-mcp.sh` is then skipped because there's no binary to register). The skill detects the missing binary at first run in each project and falls back to `Read` / `Grep` / `Glob`. The 6-phase loop still runs end-to-end; you just lose lens's token-efficient symbol slicing. You can install Rust later and re-run `./scripts/install.sh` to get lens + MCP.
+**If `cargo` is missing:** `install-lens.sh` prints a warning and exits 0, and `install-mcp.sh` is skipped because there's no binary to register. **The skill itself will then refuse to run** — pro-coder aborts at bootstrap with an install pointer when `lens` is not found on `$PATH`. Install Rust and re-run `./scripts/install.sh` to enable the skill. (v6 removed the legacy `Read`/`Grep`/`Glob` fallback because it was a strictly worse code-comprehension strategy and the agent would silently degrade to it.)
 
 **If `python3` is missing:** `install-mcp.sh` prints the JSON snippet you need to add to `~/.claude.json` manually and exits 1. Skill + lens still install; only the MCP wire-up is skipped. Lens still works via the Bash CLI in that case — you just lose the structured-tool path.
 
-**Lens language scope (today):** Rust, Python, TypeScript (`.ts`/`.tsx`), JavaScript (`.js`/`.jsx`/`.mjs`/`.cjs`), Go (`.go`), Dart (`.dart`), Java (`.java`). On unsupported codebases, `lens index` produces an empty index and the skill auto-falls back per project. More languages are upstream work in [`lens`](https://github.com/sudeep-dasgupta/lens).
+**Lens language scope (today):** Rust, Python, TypeScript (`.ts`/`.tsx`), JavaScript (`.js`/`.jsx`/`.mjs`/`.cjs`), Go (`.go`), Dart (`.dart`), Java (`.java`), C# (`.cs`). On unsupported-language codebases, `lens index` produces an empty index — the skill still runs (lens *is* installed, the contract is met) but lens calls return nothing useful, and pro-coder reads files directly for those projects. This is not "fallback mode"; it is just an unsupported-language project. More languages are upstream work in [`lens`](https://github.com/sudeep-dasgupta/lens).
 
 ---
 
@@ -123,7 +124,7 @@ The whole sequence is **idempotent**. Re-running with no source changes is a no-
 | `--symlink` | off | Symlink the skill instead of copying. `git pull` upgrades the skill in place — best for skill developers. |
 | `--copy` | on | Explicit copy mode (the default). Mutually exclusive with `--symlink`. |
 | `--force` | off | Overwrite existing destination + force lens rebuild. |
-| `--no-lens` | off | Skip the lens build entirely (also implies `--no-mcp`). Skill runs in fallback mode. |
+| `--no-lens` | off | Skip the lens build entirely (also implies `--no-mcp`). **The skill will then refuse to run at first invocation in any project** — v6 requires lens. Use this only if you intend to install lens separately afterwards. |
 | `--no-mcp` | off | Build lens but skip the `~/.claude.json` wire-up. Lens still works via Bash. |
 | `--dest DIR` | `~/.claude/skills` | Custom skills root. |
 | `--bin-dir DIR` | `~/.claude/bin` | Custom lens binary destination. |
@@ -291,7 +292,7 @@ Before the first task, Claude:
 - Creates `.claude/state/` and `.claude/state/code-map/` if missing.
 - Asks **once** whether `.claude/state/` should be gitignored or committed (`a` or `b`); answer is recorded in `.claude/state/gitignore_policy` and never asked again.
 - Reads `CLAUDE.md` if present; surfaces a one-line note if absent (does not create it).
-- Detects the lens binary on `$PATH` and the `.lens/index.db` state. Runs `lens init && lens index` on first encounter. If lens is missing OR the project has 0 supported-language symbols, the project mode is **fallback** for the rest of the session — `lens` calls become `Read`/`Grep`/`Glob`.
+- Detects the lens binary on `$PATH` and the `.lens/index.db` state. Runs `lens init && lens index` on first encounter. **If the `lens` binary is missing, the skill aborts at bootstrap with an install pointer — there is no fallback mode.** If lens is present but the project has 0 supported-language symbols (e.g. a C++ codebase), the skill still runs — lens calls return empty slices and pro-coder reads files directly; this is not "fallback mode," it is just an unsupported-language project.
 
 ### 2. The 6-phase loop
 
@@ -595,7 +596,7 @@ Every code-touching task runs through six phases. The active phase is declared a
 
 | Phase | Name | What happens |
 |---|---|---|
-| **P1** | Comprehend & Code-map | Bootstrap project state, read `CLAUDE.md`, run `lens query <blast radius>` (or Read/Grep/Glob in fallback mode) |
+| **P1** | Comprehend & Code-map | Bootstrap project state (re-verify `.history/` + `current-tasks.md` exist; abort on lens missing), read `CLAUDE.md`, run `lens query <blast radius>` |
 | **P2** | Research | Read every file in blast radius, cite `file:line`, catalog idioms + failure modes |
 | **P3** | Plan | Decompose into atomic tasks (≤100 LOC each, named verifying tests). Wait for ack only on big plans (>5 files, new dep, public API change, CI change) |
 | **P4** | Implement & Test | One task at a time. Tests in the same task. Full suite must pass |
@@ -605,7 +606,7 @@ Every code-touching task runs through six phases. The active phase is declared a
 
 ### Hard rules (invariants)
 
-1. `lens query` (or Read/Grep/Glob fallback) opens every code task. `lens . --update` closes it.
+1. `lens query` / `lens follow` / `lens refs` opens every code task; `lens . --update` closes it. **Lens is required — there is no fallback. The skill aborts at bootstrap if `lens` is not on `$PATH`.**
 2. Section boundaries (P6) are mandatory between sections. No two sections share one context.
 3. **Never write to `CLAUDE.md` directly.** Proposals go to `.claude/state/claude_md_proposals.md`. The user owns the project contract.
 4. No implementation without a presented plan.
@@ -716,7 +717,7 @@ The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `
 - Ensure you have a Rust toolchain: `cargo --version` should print `cargo 1.85+`.
 - If you see `rustup could not choose a version of cargo to run`, run `rustup default stable`.
 - If the build fails for another reason, the error is printed in full. Open an issue with the last 40 lines.
-- You can always `./scripts/install.sh --no-lens` to install just the skill and use fallback mode.
+- `--no-lens` skips the lens build but **the skill itself will refuse to run** without lens in v6. Use it only as a build-time escape hatch (e.g. you intend to install lens by hand afterwards).
 
 **`lens: command not found` when I run it directly.**
 - Check `~/.claude/bin` is on `$PATH`: `echo $PATH | tr ':' '\n' | grep claude`
@@ -735,7 +736,7 @@ The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `
 - Restart Claude Code — MCP servers are spawned at startup, not hot-reloaded.
 
 **Lens reports `0 symbols` indexed.**
-- This is expected for non-Rust/Python/TypeScript/JavaScript/Go/Dart/Java codebases. The skill detects it at bootstrap and falls back to `Read`/`Grep`/`Glob` for the rest of the session.
+- This is expected for non-Rust/Python/TypeScript/JavaScript/Go/Dart/Java/C# codebases. The skill still runs — lens *is* installed, the contract is met — but lens calls return empty slices and pro-coder reads files directly for the rest of the session. This is not "fallback mode," it is just an unsupported-language project.
 - If your project IS in a supported language and you still see 0 symbols, run `lens index` manually and check `.lens/index.db` exists. File an issue at the [lens repo](https://github.com/sudeep-dasgupta/lens) with the project structure.
 
 **Install script refuses to run with "refusing to operate on system path".**
@@ -760,7 +761,7 @@ Common edits:
 
 - **Swap the language defaults** in the Identity section if your stack isn't Rust / Python.
 - **Adjust the section-boundary threshold** (default: 5+ tasks) in the P6 triggers.
-- **Swap `lens` for a different code-graph tool** by find-and-replacing the verbs in `pro-coder/SKILL.md` (`lens query`, `lens follow`, `lens . --update`). Pass `--no-lens` to `install.sh` if you have your own tool already on `$PATH`.
+- **Swap `lens` for a different code-graph tool** by find-and-replacing the verbs in `pro-coder/SKILL.md` (`lens query`, `lens follow`, `lens . --update`). You will also need to replace the bootstrap-Step-5 `command -v lens` abort check with one for your tool — v6 hard-aborts if `lens` is missing. Pass `--no-lens` to `install.sh` if you have your own tool already on `$PATH`.
 - **Change the super-qa subagent type** (default: `general-purpose`) if you have a more specific QA agent registered.
 - **Tighten or relax severity tiers** in the P4.5 verdict format.
 
@@ -771,7 +772,7 @@ After editing, re-run `./scripts/install.sh --force` (or `git pull && ./scripts/
 ## FAQ
 
 **Q: Does this work without `lens`?**
-Yes, in fallback mode. SKILL.md detects whether `lens` is on `$PATH` (and whether `lens index` produced any symbols) once per project at bootstrap. If lens is absent or the project has 0 symbols indexed (lens supports Rust, Python, TypeScript, JavaScript, Go, Dart, and Java today), the skill swaps `lens query`/`lens follow` for `Read`/`Grep`/`Glob` automatically. The loop still runs end-to-end; the difference is per-call token cost — lens slices are budget-capped (`--budget 1500` returns ~1500 tokens), `Read`/`Grep` on a large file isn't.
+No. v6 requires lens — the skill aborts at bootstrap if the `lens` binary is not on `$PATH`, with an install pointer in the error message. (v5 had a `Read`/`Grep`/`Glob` fallback mode; v6 removed it because it was a strictly worse code-comprehension strategy and the agent would silently degrade to it.) On an unsupported-language project (anything outside Rust, Python, TypeScript, JavaScript, Go, Dart, Java, C#), lens still indexes — it just produces an empty index, and pro-coder reads files directly for that project. The contract — "lens is installed" — is met.
 
 **Q: What does lens actually buy me?**
 Symbol-aware, budget-capped slices. `lens follow some_function --budget 1500` returns the definition + signature + body + caller list in ~1500 tokens, regardless of how big the file is. `lens query "auth middleware" --budget 2000` returns the symbol-graph seeds for that topic with `file:line` anchors. By contrast, `Read` on a 2000-line file returns ~50k tokens and `Grep` returns line matches without structural context. Token savings compound across the per-task and section-level super-qa loops, where the same blast radius gets re-traversed multiple times.
@@ -780,7 +781,7 @@ Symbol-aware, budget-capped slices. `lens follow some_function --budget 1500` re
 Claude Code launches lens automatically as an MCP stdio server at startup, via the `mcpServers.lens` entry in `~/.claude.json`. You don't keep anything running. The binary lifecycle is owned by Claude Code.
 
 **Q: Can I disable super-qa for fast iteration?**
-The fast-path mode skips P3 plan presentation and P6, but still runs P4 tests and P5 `lens . --update` (in lens mode). It also skips super-qa — but only for genuinely trivial changes (typo, single-line rename, doc tweak). If a "trivial" change touches behaviour, the agent will detect that and switch back to the full loop with super-qa enabled.
+The fast-path mode skips P3 plan presentation and P6, but still runs P4 tests and P5 `lens . --update`. It also skips super-qa — but only for genuinely trivial changes (typo, single-line rename, doc tweak). If a "trivial" change touches behaviour, the agent will detect that and switch back to the full loop with super-qa enabled. (Note: even trivial tasks still emit the visible chain-of-thought block — the fast-path version collapses to a single `> fast-path: <reason>` line.)
 
 **Q: Why is super-qa read-only?**
 Separation of concerns. If super-qa could write code, it would patch its own findings, contaminating the artifact under review. The author of the fix should not also be the verifier — that's the whole point of an independent QA pass.
@@ -795,10 +796,10 @@ Never. `CLAUDE.md` is read-only to the agent. Any suggested additions are append
 The Agent tool surfaces the subagent's report inline. Super-coder also records the one-line PASS summary in the task checklist (`[x] T2 — qa: <summary>`). For deeper inspection, the structured verdict format (PASS/FAIL + BLOCKER/MAJOR/MINOR with file:line + repro) is in the response stream.
 
 **Q: How do I uninstall the lens binary but keep the skill?**
-`./scripts/uninstall.sh --keep-mcp --dest /dev/null` won't work (the safe-dest guard forbids it). Instead, remove just the binary manually: `rm ~/.claude/bin/lens ~/.claude/bin/.lens.installed.sha`, then `./scripts/install-mcp.sh --remove` to clean up the now-broken MCP entry. The skill stays installed and detects the missing lens at next invocation, falling back automatically.
+You can — but the skill will refuse to run without lens in v6. To remove just the binary: `rm ~/.claude/bin/lens ~/.claude/bin/.lens.installed.sha`, then `./scripts/install-mcp.sh --remove` to clean up the now-broken MCP entry. The skill files stay installed but pro-coder will abort at first invocation with an install pointer. To re-enable the skill, re-run `./scripts/install-lens.sh`.
 
 **Q: Can I use this on a TypeScript / Go / C++ project?**
-Yes for TypeScript, Go, Dart, and Java (lens indexes all four). For other languages (C++, Ruby, etc.) the skill detects the empty index at bootstrap and switches to fallback mode (`Read` / `Grep` / `Glob`). The loop still runs — you just lose the token-efficient retrieval. More languages are tracked at the [lens repo](https://github.com/sudeep-dasgupta/lens).
+Yes for TypeScript, Go, Dart, Java, and C# (lens indexes all five — plus Rust, Python, JavaScript). For other languages (C++, Ruby, etc.) `lens index` produces an empty index — the skill still runs (lens is installed, the contract is met) but lens calls return nothing useful and pro-coder reads files directly for that project. You lose lens's token-efficient symbol retrieval but the rest of the loop works as normal. More languages are tracked at the [lens repo](https://github.com/sudeep-dasgupta/lens).
 
 **Q: Where do I look if something seems off?**
 - `<project>/.claude/state/current_section.md` — what the agent thinks it just did.
