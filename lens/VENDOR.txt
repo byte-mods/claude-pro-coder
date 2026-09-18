@@ -1,5 +1,5 @@
 VENDOR_SHA=a29f523
-LOCAL_PATCHES=2
+LOCAL_PATCHES=3
 # claude-skill v0.2.4 — local fix in crates/lens-core/src/lang/rust.rs
 #   Bug 1: drop type-relations whose owner type is not declared in the
 #          same file (e.g. `impl Trait for ImportedType`).
@@ -19,4 +19,11 @@ LOCAL_PATCHES=2
 #   - mcp.rs: per-call freshness, graph cache, `root` arg, auto-bootstrap,
 #     ping, lens_search, lens_deps; `lens map --budget`; project-root
 #     discovery from sub-directories.
+# claude-pro-coder v0.5.0 — local patch set 3 (lens crate version 0.3.0):
+#   - assets.rs + schema v4: binary files become searchable assets —
+#     image dimensions (PNG/JPEG/GIF/WebP/BMP), MP4/MOV + WAV duration,
+#     PDF page count + text (FlateDecode, builtin) with optional pdftotext,
+#     Office (docx/xlsx/pptx/odt/ods/odp) text via a minimal zip reader,
+#     optional ffprobe; `lens describe` / `lens_describe` store a
+#     model-written description that survives re-indexing. Adds flate2.
 # Re-vendor a fresh upstream SHA once these land in lens upstream.

@@ -8,6 +8,44 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-18
+
+Every file in a project is now indexed — not just text. Lens crate local
+version 0.3.0 (`lens/VENDOR.txt`, local patch set 3).
+
+### Added
+- **Assets: images, video, audio, PDF, Office documents, archives.**
+  Binary files used to be skipped; they now get a searchable record
+  (schema v4, `assets` table + the shared FTS body) built from three
+  sources: (1) what lens extracts on its own with no external tools —
+  PNG/JPEG/GIF/WebP/BMP dimensions, MP4/MOV and WAV duration, PDF page
+  count and text from FlateDecode content streams, Office
+  (`.docx`/`.xlsx`/`.pptx`/`.odt`/`.ods`/`.odp`) text via a built-in zip
+  reader; (2) `pdftotext` and `ffprobe` when they happen to be installed
+  (`LENS_NO_EXTERNAL_TOOLS=1` disables); (3) a **stored description**.
+  Large files are never read whole — metadata comes from a bounded
+  header probe and identity is `blake3(prefix || size)`.
+- **`lens describe <file> [--text "…" --by NAME] [--clear]`** and the
+  `lens_describe` MCP tool. Show what lens knows about an asset, or
+  store what a model learned by viewing it once. Descriptions survive
+  re-indexing of the file and are part of the search body, so any model
+  in any later session finds the file with `lens search` instead of
+  re-reading the bytes: view once, describe once, search forever.
+- `lens search --kind` accepts every kind: `code`, `text`, `image`,
+  `video`, `audio`, `pdf`, `office`, `archive`, `binary`.
+- pro-coder protocol: token-discipline rule 6 (media and documents —
+  `lens describe` before opening, `lens describe --text` after viewing),
+  two tooling-table rows, a checklist line; `skill_meta.sh` checks for
+  `lens describe`.
+- Tests: lens core 506 → 518, CLI 119 → 123 (+40 e2e); new `assets`
+  unit tests cover every parser with synthetic files.
+
+### Changed
+- Oversized text files (> 512 KiB) are still skipped; oversized binaries
+  are indexed by metadata only.
+- lens-core gains the `flate2` crate (pure-Rust inflate for PDF streams
+  and zip entries).
+
 ## [0.4.0] - 2026-09-18
 
 Lens becomes an IDE-grade index and a cross-session memory for any MCP
@@ -454,7 +492,8 @@ Initial public release.
 - `--dry-run` on `install.sh` skips the cargo build entirely rather
   than running it in a no-write mode (cargo offers no such mode).
 
-[Unreleased]: https://github.com/byte-mods/claude-pro-coder/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/byte-mods/claude-pro-coder/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/byte-mods/claude-pro-coder/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/byte-mods/claude-pro-coder/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.5...v0.2.6

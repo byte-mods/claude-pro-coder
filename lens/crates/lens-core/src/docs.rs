@@ -45,13 +45,24 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
+use crate::assets::{self, AssetMeta};
 use crate::error::{LensError, Result};
 use crate::lang::Registry;
 use crate::storage::insert::unix_seconds_now;
 use crate::storage::Storage;
 use crate::tokens::estimate_tokens;
+
+/// Kinds that carry an `assets` row (everything that is not code/text).
+pub const ASSET_KINDS: &[&str] = &["image", "video", "audio", "pdf", "office", "archive", "binary"];
+
+/// All kinds accepted by `--kind` filters.
+pub const ALL_KINDS: &[&str] = &["code", "text", "image", "video", "audio", "pdf", "office", "archive", "binary"];
+
+/// Binary files above this size get a metadata-only row (header probe);
+/// they are never read whole.
+pub const MAX_ASSET_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// Files above this size are not indexed for search (generated bundles,
 /// fixtures, minified assets). 512 KiB comfortably covers hand-written
@@ -119,12 +130,14 @@ pub struct DocStamp {
     pub content_hash: [u8; 32],
 }
 
-/// One text file that needs (re-)indexing. Carries the body because the
-/// FTS table stores content.
+/// One file that needs (re-)indexing. Carries the body because the FTS
+/// table stores content. For assets the body is the searchable summary +
+/// extracted text; the stored description is merged in at apply time.
 #[derive(Debug, Clone)]
 pub struct DiscoveredDoc {
     pub relative_path: String,
-    /// `"code"` when the extension has a registered extractor, else `"text"`.
+    /// `"code"` when the extension has a registered extractor, `"text"` for
+    /// other readable files, else an asset kind (`image`, `pdf`, …).
     pub kind: &'static str,
     pub content_hash: [u8; 32],
     pub size_bytes: u64,
@@ -132,6 +145,29 @@ pub struct DiscoveredDoc {
     pub body: String,
     pub token_estimate: u32,
     pub line_count: u32,
+    /// Present for asset kinds.
+    pub asset: Option<AssetMeta>,
+}
+
+/// A stored asset record — what `lens describe <file>` shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetRecord {
+    pub path: String,
+    pub kind: String,
+    pub mime: String,
+    pub size_bytes: u64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_ms: Option<u64>,
+    pub pages: Option<u32>,
+    pub extracted_chars: u64,
+    pub extractor: String,
+    pub description: Option<String>,
+    pub described_by: Option<String>,
+    pub described_at: Option<i64>,
+    /// The searchable body (summary + description + extracted text).
+    pub body: String,
+    pub token_estimate: u32,
 }
 
 /// Result of a discovery pass.
@@ -308,10 +344,8 @@ fn consider(
         Err(_) => return Ok(()), // vanished between walk and stat — skip.
     };
     let size_bytes = metadata.len();
-    if size_bytes > MAX_DOC_BYTES {
-        out.skipped += 1;
-        return Ok(());
-    }
+    let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let known_asset = assets::kind_for_extension(ext).0 != "binary";
     let modified_at = metadata
         .modified()
         .ok()
@@ -327,14 +361,54 @@ fn consider(
         }
     }
 
+    // Asset path: known media/document extensions, or content that sniffs
+    // as binary. Identity is blake3(first 1 MiB || size) so multi-GB media
+    // is never read whole. Oversized *text* files are skipped as before.
+    let prefix = probe_prefix(abs);
+    let is_asset = known_asset || is_binary(&prefix);
+    if !is_asset && size_bytes > MAX_DOC_BYTES {
+        out.skipped += 1;
+        return Ok(());
+    }
+    if is_asset {
+        if size_bytes > MAX_ASSET_BYTES {
+            out.skipped += 1;
+            return Ok(());
+        }
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&prefix);
+        hasher.update(&size_bytes.to_le_bytes());
+        let content_hash = *hasher.finalize().as_bytes();
+        out.present.insert(rel.clone());
+        if let Some(stamp) = known.get(&rel) {
+            if stamp.content_hash == content_hash {
+                out.restamp.push((rel, size_bytes, modified_at));
+                return Ok(());
+            }
+        }
+        let meta = assets::extract(abs, size_bytes);
+        let kind: &'static str = meta.kind;
+        let body = assets::build_body(&meta, None);
+        let token_estimate = assets::body_tokens(&body);
+        let line_count = body.lines().count() as u32;
+        out.to_upsert.push(DiscoveredDoc {
+            relative_path: rel,
+            kind,
+            content_hash,
+            size_bytes,
+            modified_at,
+            body,
+            token_estimate,
+            line_count,
+            asset: Some(meta),
+        });
+        return Ok(());
+    }
+
     let bytes = match std::fs::read(abs) {
         Ok(b) => b,
         Err(_) => return Ok(()),
     };
-    if is_binary(&bytes) {
-        out.skipped += 1;
-        return Ok(());
-    }
     let content_hash = *blake3::hash(&bytes).as_bytes();
     out.present.insert(rel.clone());
 
@@ -361,8 +435,19 @@ fn consider(
         body,
         token_estimate,
         line_count,
+        asset: None,
     });
     Ok(())
+}
+
+/// First [`assets::HEADER_PROBE_BYTES`] of a file (or the whole file when
+/// smaller). Used for the binary sniff and the asset identity hash.
+fn probe_prefix(abs: &Path) -> Vec<u8> {
+    use std::io::Read;
+    let Ok(f) = std::fs::File::open(abs) else { return Vec::new() };
+    let mut buf = Vec::new();
+    let _ = f.take(assets::HEADER_PROBE_BYTES as u64).read_to_end(&mut buf);
+    buf
 }
 
 fn relative(root: &Path, abs: &Path) -> Option<String> {
@@ -436,6 +521,15 @@ pub fn apply_discovery(
         let mut restamp = tx
             .prepare("UPDATE docs SET size_bytes = ?1, modified_at = ?2 WHERE path = ?3")
             .map_err(|e| LensError::other(format!("docs: prepare restamp: {e}")))?;
+        let mut get_desc = tx
+            .prepare("SELECT a.description, a.described_by, a.described_at FROM assets a JOIN docs d ON d.id = a.doc_id WHERE d.path = ?1")
+            .map_err(|e| LensError::other(format!("docs: prepare get description: {e}")))?;
+        let mut ins_asset = tx
+            .prepare(
+                "INSERT INTO assets (doc_id, mime, width, height, duration_ms, pages, extracted_chars, extractor, description, described_by, described_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            )
+            .map_err(|e| LensError::other(format!("docs: prepare insert asset: {e}")))?;
 
         let mut remove = |path: &str| -> Result<bool> {
             let id: Option<i64> = find_id
@@ -459,11 +553,29 @@ pub fn apply_discovery(
             }
         }
         for d in &discovery.to_upsert {
+            // A stored description outlives the bytes it described — carry
+            // it over before the CASCADE delete drops the old asset row.
+            let carried: Option<(Option<String>, Option<String>, Option<i64>)> = if d.asset.is_some() {
+                get_desc
+                    .query_row(params![&d.relative_path], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                    .ok()
+            } else {
+                None
+            };
             if remove(&d.relative_path)? {
                 stats.replaced += 1;
             } else {
                 stats.added += 1;
             }
+            let (body, token_estimate, line_count) = match (&d.asset, &carried) {
+                (Some(meta), Some((Some(desc), _, _))) => {
+                    let b = assets::build_body(meta, Some(desc));
+                    let t = assets::body_tokens(&b);
+                    let l = b.lines().count() as u32;
+                    (b, t, l)
+                }
+                _ => (d.body.clone(), d.token_estimate, d.line_count),
+            };
             ins_doc
                 .execute(params![
                     &d.relative_path,
@@ -472,14 +584,32 @@ pub fn apply_discovery(
                     d.size_bytes as i64,
                     d.modified_at,
                     now,
-                    d.token_estimate as i64,
-                    d.line_count as i64,
+                    token_estimate as i64,
+                    line_count as i64,
                 ])
                 .map_err(|e| LensError::other(format!("docs: insert {}: {e}", d.relative_path)))?;
             let id = tx.last_insert_rowid();
             ins_fts
-                .execute(params![id, &d.relative_path, &d.body])
+                .execute(params![id, &d.relative_path, &body])
                 .map_err(|e| LensError::other(format!("docs: insert fts {}: {e}", d.relative_path)))?;
+            if let Some(meta) = &d.asset {
+                let (desc, by, at) = carried.unwrap_or((None, None, None));
+                ins_asset
+                    .execute(params![
+                        id,
+                        &meta.mime,
+                        meta.width.map(|v| v as i64),
+                        meta.height.map(|v| v as i64),
+                        meta.duration_ms.map(|v| v as i64),
+                        meta.pages.map(|v| v as i64),
+                        meta.extracted_text.chars().count() as i64,
+                        meta.extractor,
+                        desc,
+                        by,
+                        at,
+                    ])
+                    .map_err(|e| LensError::other(format!("docs: insert asset {}: {e}", d.relative_path)))?;
+            }
         }
         for (path, size, mtime) in &discovery.restamp {
             restamp
@@ -490,6 +620,104 @@ pub fn apply_discovery(
     tx.commit()
         .map_err(|e| LensError::other(format!("docs: commit: {e}")))?;
     Ok(stats)
+}
+
+/// Read the stored asset record for `path`. `Ok(None)` when the path is
+/// not an indexed asset (a text file, or not indexed at all).
+pub fn describe(storage: &Storage, path: &str) -> Result<Option<AssetRecord>> {
+    let conn = storage.connection();
+    let row = conn
+        .query_row(
+            "SELECT d.id, d.kind, d.size_bytes, d.token_estimate, a.mime, a.width, a.height, a.duration_ms, a.pages,
+                    a.extracted_chars, a.extractor, a.description, a.described_by, a.described_at,
+                    (SELECT body FROM docs_fts WHERE rowid = d.id)
+             FROM docs d JOIN assets a ON a.doc_id = d.id WHERE d.path = ?1",
+            params![path],
+            |r| {
+                Ok(AssetRecord {
+                    path: path.to_string(),
+                    kind: r.get(1)?,
+                    size_bytes: r.get::<_, i64>(2)?.max(0) as u64,
+                    token_estimate: r.get::<_, i64>(3)?.max(0) as u32,
+                    mime: r.get(4)?,
+                    width: r.get::<_, Option<i64>>(5)?.map(|v| v as u32),
+                    height: r.get::<_, Option<i64>>(6)?.map(|v| v as u32),
+                    duration_ms: r.get::<_, Option<i64>>(7)?.map(|v| v as u64),
+                    pages: r.get::<_, Option<i64>>(8)?.map(|v| v as u32),
+                    extracted_chars: r.get::<_, i64>(9)?.max(0) as u64,
+                    extractor: r.get(10)?,
+                    description: r.get(11)?,
+                    described_by: r.get(12)?,
+                    described_at: r.get(13)?,
+                    body: r.get::<_, Option<String>>(14)?.unwrap_or_default(),
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| LensError::other(format!("describe: query: {e}")))?;
+    Ok(row)
+}
+
+/// Store (or clear, with `None`) the description of an indexed asset and
+/// rebuild its searchable body. Returns `Ok(false)` when `path` is not an
+/// indexed asset.
+pub fn set_description(
+    storage: &mut Storage,
+    path: &str,
+    description: Option<&str>,
+    by: Option<&str>,
+) -> Result<bool> {
+    let Some(rec) = describe(storage, path)? else { return Ok(false) };
+    // Rebuild the body from the stored metadata + extracted text (kept in
+    // the FTS body after the summary/description lines).
+    let extracted = extracted_text_of(&rec);
+    let meta = AssetMeta {
+        kind: ASSET_KINDS.iter().copied().find(|k| *k == rec.kind).unwrap_or("binary"),
+        mime: rec.mime.clone(),
+        width: rec.width,
+        height: rec.height,
+        duration_ms: rec.duration_ms,
+        pages: rec.pages,
+        extracted_text: extracted,
+        extractor: "stored",
+    };
+    let desc = description.map(str::trim).filter(|d| !d.is_empty());
+    let body = assets::build_body(&meta, desc);
+    let tokens = assets::body_tokens(&body) as i64;
+    let lines = body.lines().count() as i64;
+    let now = unix_seconds_now();
+    let tx = storage.transaction()?;
+    let id: i64 = tx
+        .query_row("SELECT id FROM docs WHERE path = ?1", params![path], |r| r.get(0))
+        .map_err(|e| LensError::other(format!("describe: id: {e}")))?;
+    tx.execute(
+        "UPDATE assets SET description = ?1, described_by = ?2, described_at = ?3 WHERE doc_id = ?4",
+        params![desc, desc.and(by), desc.map(|_| now), id],
+    )
+    .map_err(|e| LensError::other(format!("describe: update asset: {e}")))?;
+    tx.execute(
+        "UPDATE docs SET token_estimate = ?1, line_count = ?2 WHERE id = ?3",
+        params![tokens, lines, id],
+    )
+    .map_err(|e| LensError::other(format!("describe: update doc: {e}")))?;
+    tx.execute("DELETE FROM docs_fts WHERE rowid = ?1", params![id])
+        .map_err(|e| LensError::other(format!("describe: delete fts: {e}")))?;
+    tx.execute("INSERT INTO docs_fts (rowid, path, body) VALUES (?1, ?2, ?3)", params![id, path, &body])
+        .map_err(|e| LensError::other(format!("describe: insert fts: {e}")))?;
+    tx.commit().map_err(|e| LensError::other(format!("describe: commit: {e}")))?;
+    Ok(true)
+}
+
+/// The extracted-text part of a stored body: everything after the summary
+/// line and the optional `description:` line.
+fn extracted_text_of(rec: &AssetRecord) -> String {
+    let mut lines = rec.body.lines();
+    let _summary = lines.next();
+    let mut rest: Vec<&str> = lines.collect();
+    if rest.first().is_some_and(|l| l.starts_with("description: ")) {
+        rest.remove(0);
+    }
+    rest.join("\n")
 }
 
 /// Per-file token estimate for `path`, from the docs index when present,
@@ -564,6 +792,9 @@ pub struct SearchResult {
     pub files_matched: u64,
     /// True when files or lines were dropped for `limit` or budget.
     pub truncated: bool,
+    /// True when no file matched *all* terms and the query was re-run as
+    /// `term OR term …` (files matching any term, ranked by how many).
+    pub relaxed: bool,
     pub budget: u32,
     pub estimated_tokens: u32,
 }
@@ -653,10 +884,30 @@ pub fn search_docs(storage: &Storage, query: &str, opts: &SearchOptions) -> Resu
     };
 
     let scope = opts.scope.as_deref().map(|s| s.trim_matches('/').to_string()).filter(|s| !s.is_empty());
-    let kind = opts.kind.clone().filter(|k| k == "code" || k == "text");
+    let kind = opts.kind.clone().filter(|k| ALL_KINDS.contains(&k.as_str()));
 
-    // Rank files by BM25. We over-fetch (limit + 1) to detect truncation
-    // without a COUNT, and additionally count all matches cheaply.
+    // Strict pass (all terms), then — for multi-term queries without
+    // explicit operators — a relaxed OR pass so a model asking about two
+    // topics at once still gets the best files for either.
+    let has_operators = query.split_whitespace().any(|t| matches!(t, "OR" | "AND" | "NOT"));
+    let mut rows = fetch_ranked(storage, &match_expr, scope.as_deref(), kind.as_deref(), opts.limit)?;
+    if rows.is_empty() && result.terms.len() > 1 && !has_operators {
+        let relaxed_expr = result.terms.iter().map(|t| format!("\"{t}\"*")).collect::<Vec<_>>().join(" OR ");
+        rows = fetch_ranked(storage, &relaxed_expr, scope.as_deref(), kind.as_deref(), opts.limit)?;
+        result.relaxed = !rows.is_empty();
+    }
+    finish_search(storage, opts, result, rows)
+}
+
+/// FTS query + scope/kind filters, over-fetching by one to detect truncation.
+fn fetch_ranked(
+    storage: &Storage,
+    match_expr: &str,
+    scope: Option<&str>,
+    kind: Option<&str>,
+    limit: u32,
+) -> Result<Vec<(i64, String, String, String)>> {
+
     let conn = storage.connection();
     let mut sql = String::from(
         "SELECT d.id, d.path, d.kind, f.body
@@ -673,27 +924,40 @@ pub fn search_docs(storage: &Storage, query: &str, opts: &SearchOptions) -> Resu
     let limit_pos = 1 + if scope.is_some() { 2 } else { 0 } + if kind.is_some() { 1 } else { 0 } + 1;
     sql.push_str(&limit_pos.to_string());
 
-    let scope_like: String = scope.as_ref().map(|s| format!("{s}/%")).unwrap_or_default();
-    let mut bind: Vec<&dyn rusqlite::ToSql> = vec![&match_expr];
-    if let Some(s) = scope.as_ref() {
-        bind.push(s);
+    let scope_like: String = scope.map(|s| format!("{s}/%")).unwrap_or_default();
+    let scope_owned: String = scope.unwrap_or_default().to_string();
+    let kind_owned: String = kind.unwrap_or_default().to_string();
+    let match_owned = match_expr.to_string();
+    let mut bind: Vec<&dyn rusqlite::ToSql> = vec![&match_owned];
+    if scope.is_some() {
+        bind.push(&scope_owned);
         bind.push(&scope_like);
     }
-    if let Some(k) = kind.as_ref() {
-        bind.push(k);
+    if kind.is_some() {
+        bind.push(&kind_owned);
     }
-    let fetch_limit = (opts.limit as i64).saturating_add(1);
+    let fetch_limit = (limit as i64).saturating_add(1);
     bind.push(&fetch_limit);
 
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| LensError::other(format!("search: prepare: {e}")))?;
-    let rows: Vec<(i64, String, String, String)> = stmt
+    let rows = stmt
         .query_map(bind.as_slice(), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
         .map_err(|e| LensError::other(format!("search: query: {e}")))?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| LensError::other(format!("search: collect: {e}")))?;
+    Ok(rows)
+}
 
+/// Turn ranked rows into per-line hits under the token budget.
+fn finish_search(
+    storage: &Storage,
+    opts: &SearchOptions,
+    mut result: SearchResult,
+    rows: Vec<(i64, String, String, String)>,
+) -> Result<SearchResult> {
+    let conn = storage.connection();
     result.files_matched = rows.len() as u64;
     if rows.len() as u32 > opts.limit {
         result.truncated = true;
@@ -835,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn test_docs_sync_skips_binary_and_oversized_files() {
+    fn test_docs_sync_indexes_binary_as_asset_and_skips_oversized_text() {
         let (dir, mut s) = project();
         let root = dir.path();
         write(root, "bin.dat", &[0u8, 1, 2, 3, 0, 5]);
@@ -844,8 +1108,87 @@ mod tests {
         write(root, "ok.txt", b"hello");
         let reg = Registry::with_default_languages();
         let stats = sync_docs(&mut s, root, &reg).unwrap();
-        assert_eq!(stats.added, 1);
-        assert_eq!(stats.skipped, 2);
+        assert_eq!(stats.added, 2, "text + binary asset");
+        assert_eq!(stats.skipped, 1, "oversized text is skipped");
+        let kinds: Vec<(String, String)> = s
+            .connection()
+            .prepare("SELECT path, kind FROM docs ORDER BY path")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(kinds, vec![("bin.dat".into(), "binary".into()), ("ok.txt".into(), "text".into())]);
+        let assets_rows: i64 = s.connection().query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0)).unwrap();
+        assert_eq!(assets_rows, 1);
+    }
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut v = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, b'I', b'H', b'D', b'R'];
+        v.extend_from_slice(&w.to_be_bytes());
+        v.extend_from_slice(&h.to_be_bytes());
+        v.extend_from_slice(&[8, 6, 0, 0, 0]);
+        v
+    }
+
+    #[test]
+    fn test_docs_asset_image_searchable_by_name_and_description_survives_reindex() {
+        let (dir, mut s) = project();
+        let root = dir.path();
+        write(root, "design/hero-banner.png", &png(1200, 400));
+        let reg = Registry::with_default_languages();
+        sync_docs(&mut s, root, &reg).unwrap();
+        let rec = describe(&s, "design/hero-banner.png").unwrap().expect("asset record");
+        assert_eq!(rec.kind, "image");
+        assert_eq!((rec.width, rec.height), (Some(1200), Some(400)));
+        assert!(rec.description.is_none());
+        assert!(rec.body.starts_with("[image 1200x400 image/png]"));
+
+        // A model views the image once and stores what it saw.
+        assert!(set_description(&mut s, "design/hero-banner.png", Some("Landing page hero: blue gradient, product logo centred"), Some("claude")).unwrap());
+        let r = search_docs(&s, "gradient logo", &SearchOptions::default()).unwrap();
+        assert_eq!(r.files.len(), 1);
+        assert_eq!(r.files[0].kind, "image");
+        assert!(r.files[0].hits[0].text.contains("description:"));
+
+        // The bytes change (re-export at a new size, with a trailing chunk so
+        // the byte length differs — same-length rewrites within one second
+        // are indistinguishable to the stat fast path by design) →
+        // re-indexed, description kept.
+        let mut bigger = png(2400, 800);
+        bigger.extend_from_slice(b"IEND-extra-bytes");
+        write(root, "design/hero-banner.png", &bigger);
+        let stats = sync_docs(&mut s, root, &reg).unwrap();
+        assert_eq!(stats.replaced, 1);
+        let rec = describe(&s, "design/hero-banner.png").unwrap().unwrap();
+        assert_eq!(rec.width, Some(2400));
+        assert_eq!(rec.description.as_deref(), Some("Landing page hero: blue gradient, product logo centred"));
+        assert_eq!(rec.described_by.as_deref(), Some("claude"));
+        assert!(rec.body.contains("description: Landing page hero"));
+
+        // Clearing removes it from search.
+        assert!(set_description(&mut s, "design/hero-banner.png", None, None).unwrap());
+        let r = search_docs(&s, "gradient", &SearchOptions::default()).unwrap();
+        assert!(r.files.is_empty());
+        // Not an asset → false.
+        write(root, "notes.txt", b"plain");
+        sync_docs(&mut s, root, &reg).unwrap();
+        assert!(!set_description(&mut s, "notes.txt", Some("x"), None).unwrap());
+        assert!(describe(&s, "notes.txt").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_docs_asset_kind_filter_in_search() {
+        let (dir, mut s) = project();
+        let root = dir.path();
+        write(root, "a.png", &png(2, 2));
+        write(root, "a.txt", b"image banner text");
+        let reg = Registry::with_default_languages();
+        sync_docs(&mut s, root, &reg).unwrap();
+        set_description(&mut s, "a.png", Some("banner"), None).unwrap();
+        let imgs = search_docs(&s, "banner", &SearchOptions { kind: Some("image".into()), ..Default::default() }).unwrap();
+        assert_eq!(imgs.files.len(), 1);
+        assert_eq!(imgs.files[0].path, "a.png");
     }
 
     #[test]
@@ -1033,6 +1376,23 @@ mod tests {
         assert!(r.truncated);
         assert!(r.estimated_tokens <= 40);
         assert!(r.files[0].hits.len() < MAX_LINES_PER_FILE);
+    }
+
+    #[test]
+    fn test_search_relaxes_to_or_when_no_file_has_all_terms() {
+        let (dir, mut s) = project();
+        let root = dir.path();
+        write(root, "a.txt", b"retry with exponential backoff\n");
+        write(root, "b.txt", b"roadmap for the quarter\n");
+        let reg = Registry::with_default_languages();
+        sync_docs(&mut s, root, &reg).unwrap();
+        let r = search_docs(&s, "backoff roadmap", &SearchOptions::default()).unwrap();
+        assert!(r.relaxed, "no file has both terms → OR pass");
+        assert_eq!(r.files.len(), 2);
+        // A single-term miss stays a miss; explicit operators are never relaxed.
+        assert!(!search_docs(&s, "zzz", &SearchOptions::default()).unwrap().relaxed);
+        let strict = search_docs(&s, "backoff AND roadmap", &SearchOptions::default()).unwrap();
+        assert!(!strict.relaxed && strict.files.is_empty());
     }
 
     #[test]

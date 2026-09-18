@@ -63,8 +63,9 @@ Rust is required: the install builds the `lens` binary and the skill refuses to 
 | **Architecture diagrams** | Generate visual Mermaid flowcharts of the codebase using lens for symbol-aware analysis. Outputs `ARCHITECTURE.md` at the project root — viewable in GitHub, VS Code, any Mermaid renderer. | `diagram/SKILL.md` |
 | **Symbol-aware retrieval (lens)** | Budget-capped `lens follow`, `lens query`, `lens refs`, `lens slice`, `lens explain`, `lens path`, `lens map --budget`, `lens deps`. ~1500 tokens for a function definition + doc + signature + body + callers regardless of file size. Budgets are fitted with a code-aware token estimator, and every call ends with a `tokens emitted / saved` footer. | `lens/` crate, `~/.claude/bin/lens` |
 | **Any-language search + memory** | `lens search "<words>"` — FTS5 keyword search over every text file in the project (any language, docs, config, shell) *and* the agent's notes under `.claude/state/` (indexed even when gitignored). Ranked per file, budget-capped, each hit annotated with its enclosing symbol. The capped replacement for a tree-wide `Grep`, and the recall path for prior-session notes. | `lens search`, `lens_search` MCP tool |
+| **Every file, not just text** | Images, video, audio, PDF, Office documents and archives are indexed as assets: dimensions, duration, page count and extracted text (PDF and Office text are pulled out with no external tools; `pdftotext`/`ffprobe` are used when present) plus a stored description. `lens describe <file> --text "…"` records what a model saw after viewing a file once; from then on every model in every session finds it with `lens search` instead of re-reading the bytes. | `lens describe`, `lens_describe` MCP tool |
 | **File connections** | `lens deps <file>` — imports in both directions (resolved to project files), call edges per counterpart file, most-called symbols. Cross-file calls resolve the way real code writes them (`from pkg.mod import f`, `import { f } from "./mod"`, `use crate::a::b`, `self.method()`, Go package imports). | `lens deps`, `lens_deps` MCP tool |
-| **MCP-native tool surface** | Lens runs as an MCP stdio server (`lens mcp`) auto-wired into `~/.claude.json`. Nine structured tools (`lens_follow`, `lens_refs`, `lens_query`, `lens_explain`, `lens_path`, `lens_slice`, `lens_map`, `lens_search`, `lens_deps`), each with an optional `root` for multi-project sessions. Auto-freshness on every call, auto-bootstrap of a missing index, cached graph. Works with Claude Code, Codex, Cursor, or any MCP client. | `scripts/install-mcp.sh`, `~/.claude.json` |
+| **MCP-native tool surface** | Lens runs as an MCP stdio server (`lens mcp`) auto-wired into `~/.claude.json`. Ten structured tools (`lens_follow`, `lens_refs`, `lens_query`, `lens_explain`, `lens_path`, `lens_slice`, `lens_map`, `lens_search`, `lens_deps`, `lens_describe`), each with an optional `root` for multi-project sessions. Auto-freshness on every call, auto-bootstrap of a missing index, cached graph. Works with Claude Code, Codex, Cursor, or any MCP client. | `scripts/install-mcp.sh`, `~/.claude.json` |
 | **Persistent code-map** | Per-area Markdown notes under `<project>/.claude/state/code-map/` capturing API shapes, invariants, callers, gotchas with `file:line` anchors. Survives across sessions; reconciled at every section close. | `<project>/.claude/state/code-map/*.md` |
 | **Section snapshots** | At each section boundary (5+ tasks or explicit `section boundary` keyword), the agent writes a structured snapshot of verified facts, open invariants, and the next-section blast radius — then stops. The next session resumes from the snapshot, not from a stale conversation tail. | `<project>/.claude/state/current_section.md` |
 | **CLAUDE.md proposal queue** | The agent never writes to `CLAUDE.md`. Suggested project-contract additions are appended (with file:line justification + confidence) to `<project>/.claude/state/claude_md_proposals.md` for your review. | `<project>/.claude/state/claude_md_proposals.md` |
@@ -74,7 +75,7 @@ Rust is required: the install builds the `lens` binary and the skill refuses to 
 | **Token discipline + one-shot build mode** | v7 of the protocol: default budgets, narrow before raising, no whole-file `Read` of a file lens already sliced, `lens search` instead of tree-wide `Grep`. For "build me X end-to-end" requests: an objective contract with verifiable acceptance checks, every section planned up front, continuous section boundaries re-anchored from disk, and done only when the end-to-end verification passes QA. | `pro-coder/SKILL.md` (P1, One-shot build mode) |
 | **Idempotent install + atomic file ops** | `install.sh` re-runs are no-ops when source matches dest (SKILL.md byte-equality + lens source-hash). Copy mode stages into a sibling tmp dir then `mv` (same-FS atomic). Symlink mode replaces real dirs explicitly. Uninstall reaps orphan staging dirs from interrupted prior installs. | `scripts/install.sh`, `scripts/uninstall.sh`, `scripts/_lib.sh` |
 | **Safe-dest guard** | All destructive operations refuse to run on `/`, `$HOME`, or any system path (`/etc`, `/var`, `/usr`, `/private`, `/Applications`, `/Network`, `/Volumes`, `/System`, `/Library`, `/opt`, `/boot`, `/dev`, `/proc`, `/sys`, `/bin`, `/sbin`, `/home`, `/root`, `/srv`, `/run`, `/lib`, `/lib64`, `/mnt`, `/media`). Paths are canonicalised first — `..`-traversal bypasses (e.g. `--dest ~/skills/../../../etc`) trip the guard. | `scripts/_lib.sh` |
-| **Committed regression suite** | `scripts/test/round_trip.sh` runs 73 assertions: canonicalisation, safe-dest guard, orphan-staging reap, copy + symlink round-trips, idempotency, extended-flag forms, SKILL.md meta-tests (36 checks: frontmatter, required sections, P-ref resolution, code-fence balance, no fallback-mode language, v7 surface), and the `--strict` allow-list + root-refusal guards. Lens ships 666 Rust tests (`cargo test --workspace`). Both run in CI. | `scripts/test/round_trip.sh`, `lens/` |
+| **Committed regression suite** | `scripts/test/round_trip.sh` runs 73 assertions: canonicalisation, safe-dest guard, orphan-staging reap, copy + symlink round-trips, idempotency, extended-flag forms, SKILL.md meta-tests (37 checks: frontmatter, required sections, P-ref resolution, code-fence balance, no fallback-mode language, v7 surface), and the `--strict` allow-list + root-refusal guards. Lens ships 683 Rust tests (`cargo test --workspace`). Both run in CI. | `scripts/test/round_trip.sh`, `lens/` |
 
 ---
 
@@ -334,6 +335,7 @@ The tools currently registered:
 | `lens_map` | `lens map [--scope DIR] [--depth N] [--budget N]` | Architecture summary by directory, depth auto-reduced to fit the budget |
 | `lens_search` | `lens search "<words>" [--budget N] [--limit N] [--scope DIR] [--kind code\|text]` | Keyword search over every text file (any language + docs + `.claude/state` notes) |
 | `lens_deps` | `lens deps <file>` | File-level imports / calls in both directions + hot symbols |
+| `lens_describe` | `lens describe <file> [--text …] [--clear]` | Asset metadata + extracted text + stored description; store what a model saw |
 
 Every tool also accepts `root` (absolute path) so one server can serve several projects; the server's default is `lens mcp --root PATH` or its spawn directory. Every call runs the freshness check, builds a missing index on first use, and returns the same `tokens emitted / saved` footer as the CLI.
 
@@ -477,6 +479,8 @@ lens map [--scope DIR] [--depth N] [--budget N]         # architecture summary, 
 lens search "<words>" [--budget N] [--limit N] [--scope DIR] [--kind code|text]
                                                         # keyword search over every text file (any language)
 lens deps <file>                                        # imports / calls in and out, hot symbols
+lens describe <file> [--text "…" --by NAME] [--clear] [--budget N]
+                                                        # image/video/audio/pdf/office asset: metadata, extracted text, stored description
 ```
 
 All read verbs work from any sub-directory of the project (they walk up to `.lens/`), and every one ends with `_tokens: ~N emitted • ~M saved vs reading K files whole_`.
@@ -506,6 +510,7 @@ lens mcp [--root PATH]                                  # run as a stdio MCP ser
 | `LENS_NO_AUTO_UPDATE` | unset | Set to `1` to disable auto-freshness for a session. |
 | `LENS_FRESHNESS_THROTTLE_SECONDS` | `5` | Tune the auto-freshness throttle window. |
 | `LENS_NO_METER` | unset | Set to `1` to stop read verbs from recording into `.lens/meter.txt`. |
+| `LENS_NO_EXTERNAL_TOOLS` | unset | Set to `1` to skip `pdftotext` / `ffprobe` even when installed. |
 
 ---
 
@@ -524,6 +529,7 @@ lens mcp [--root PATH]                                  # run as a stdio MCP ser
 | `lens map [--scope DIR] [--depth N] [--budget N]` | Architecture summary by directory with hot-spot ranking; depth folds to fit | ≤ budget |
 | `lens search "<words>" [--budget N] [--scope DIR] [--kind code\|text]` | Ranked `file:line` hits across every text file, any language, with enclosing symbols | ≤ budget |
 | `lens deps <file>` | Imports in/out, call edges per file in/out, most-called symbols | small |
+| `lens describe <file> [--text …]` | Asset card: dimensions / duration / pages, extracted text excerpt, stored description | ≤ budget |
 | `lens meter [--json] [--diff] [--reset]` | Persistent counters across sessions / `/clear`: lens tokens emitted, tokens saved, leverage | tiny |
 | `lens watch [--debounce MS]` | Auto-reindex on file changes; long-running | (server mode) |
 | `lens add <url>` | Fetch + index a remote source file | n/a |
@@ -541,6 +547,8 @@ The win versus `Read` + `Grep`: `lens follow some_function --budget 1500` return
 **Cross-file calls resolve the way code is written.** Beyond exact qualified-name matches, lens links `from pkg.mod import f; f()` and `import pkg.mod as m; m.f()` (Python, absolute and relative), `use crate::a::b; b()` (Rust, workspace crate roots detected), `import { f } from "./mod"` (TypeScript/JavaScript, extension and `index.*` resolution), Go package imports (`store.Open()`), and `self.` / `this.` receivers. A bare name defined exactly once in the project resolves too; dotted names never use that rule, so `list.append` cannot bind to an unrelated `append`. On this repository 2 833 of 10 319 call sites resolve — those edges are what `lens refs`, `lens follow`'s callers, `lens map`'s hot spots and `lens query` traverse.
 
 **Tokens: measured, not guessed.** Budgets are fitted with a code-aware estimator (identifier sub-words, operator merging, indentation, newlines — about 3.2 chars per token on real code, versus the flat 4 that under-counted dense code by up to 40%). Every read verb ends with `_tokens: ~N emitted • ~M saved vs reading K files whole_`, and `lens meter` accumulates those numbers across sessions with a leverage ratio. A typical section on this repository runs at 20–25× (whole-file tokens ÷ lens tokens).
+
+**Every file is indexed.** Binary files are assets: lens reads a bounded header for PNG/JPEG/GIF/WebP/BMP dimensions and MP4/MOV/WAV duration, extracts PDF page counts and text (FlateDecode streams) and Office text (`.docx`/`.xlsx`/`.pptx`/`.odt`/`.ods`/`.odp`) with a built-in zip reader, and uses `pdftotext` / `ffprobe` when they are installed. On top of that sits a **stored description**: `lens describe img.png --text "Login screen with error banner" --by claude` records what a model saw after viewing the file once; the description survives re-exports of the file and is part of the search body. Video and audio content cannot be understood without a model that can watch or listen — lens records duration and lets the model or user describe it once.
 
 **Search is memory.** `lens search` indexes every non-binary text file under 512 KiB — code in any language, docs, config, shell — and *always* includes `.claude/state/**`, `current-tasks.md`, `schema.txt`, `CLAUDE.md`, `AGENTS.md` and `README.md`, even when `.gitignore` excludes them. That is what lets the skill (or any model over MCP) recall its own code-map notes and section snapshots by keyword instead of re-reading them. `.git/`, `.lens/`, `.history/`, `node_modules/`, lock files and `.env*` are never indexed.
 
@@ -734,7 +742,7 @@ The repo ships with a committed regression suite at `scripts/test/round_trip.sh`
 bash scripts/test/round_trip.sh
 ```
 
-Sub-tests (73 assertions total; the SKILL.md meta-test delegates to 36 sub-checks):
+Sub-tests (73 assertions total; the SKILL.md meta-test delegates to 37 sub-checks):
 
 | Group | What it covers |
 |---|---|
@@ -744,12 +752,12 @@ Sub-tests (73 assertions total; the SKILL.md meta-test delegates to 36 sub-check
 | `test_round_trip_copy` (10) | install --copy → assert → uninstall → assert; install + uninstall idempotency |
 | `test_round_trip_symlink` (11) | install --symlink → assert → uninstall → assert; symlink target verification; install + uninstall idempotency |
 | `test_install_extended_flags` (12) | `install.sh --dest=VALUE` and `--quiet` and `--dry-run`; `uninstall.sh --dest=VALUE`; empty `--flag=` rejection |
-| `test_skill_meta` (1, delegates to `skill_meta.sh` for 36 sub-checks) | SKILL.md frontmatter, required sections, P-reference resolution, markdown code-fence balance, no placeholder leaks, no fallback-mode language in SKILL.md / README.md / install.sh, v7 protocol surface (`lens search`, `lens deps`, token discipline, one-shot build mode) |
+| `test_skill_meta` (1, delegates to `skill_meta.sh` for 37 sub-checks) | SKILL.md frontmatter, required sections, P-reference resolution, markdown code-fence balance, no placeholder leaks, no fallback-mode language in SKILL.md / README.md / install.sh, v7 protocol surface (`lens search`, `lens deps`, token discipline, one-shot build mode) |
 | `test_strict_and_root_guards` (11) | `sc_assert_strict_allowed` accepts paths under `~/.claude/`, rejects others incl. `..`-traversal; `sc_assert_not_root` refuses EUID=0 by default and accepts under `--allow-root`; end-to-end `install.sh --strict` |
 
 The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `rm -rf` at exit), **CI-friendly** (exit 0 on PASS, non-zero with numeric failure count otherwise), and **cwd-independent** (passes from any directory).
 
-Lens has its own suite — 506 core tests, 118 CLI unit tests and 40 end-to-end CLI tests:
+Lens has its own suite — 518 core tests, 123 CLI unit tests and 40 end-to-end CLI tests:
 
 ```bash
 cd lens && cargo test --workspace
@@ -827,6 +835,9 @@ No. v6 requires lens — the skill aborts at bootstrap if the `lens` binary is n
 
 **Q: What does lens actually buy me?**
 Symbol-aware, budget-capped slices — and a receipt. `lens follow some_function --budget 1500` returns the doc + definition + signature + body + caller list in ~1500 tokens, regardless of how big the file is. `lens query "auth middleware" --budget 2000` returns the symbol-graph seeds for that topic with `file:line` anchors. `lens search "retry backoff"` returns ranked `file:line` hits across every file in any language instead of a wall of grep output. By contrast, `Read` on a 2000-line file returns ~50k tokens and `Grep` returns every match without structural context. Every call ends with `tokens emitted / saved`, and `lens meter` totals them; on this repository a section typically runs at 20–25× leverage. Savings compound across the per-task and section-level super-qa loops, where the same blast radius gets re-traversed multiple times.
+
+**Q: Does it understand images, videos and PDFs?**
+It indexes them. PDF and Office text is extracted with no external tools; images get dimensions; video/audio get duration (via `ffprobe` when installed). Genuine *understanding* of an image or a video needs a model that can see it — so the workflow is: `lens describe <file>` first (cheap), and if nothing useful is stored, view it once and record what you saw with `lens describe <file> --text "…"`. From then on every model in every session gets the answer from `lens search` without touching the bytes. The pro-coder protocol makes this a hard rule (token discipline, rule 6).
 
 **Q: Can GPT / Codex / Cursor use lens too?**
 Yes. `lens mcp` is a standard MCP stdio server; see [Using lens from other agents](#using-lens-from-other-agents-codex-gpt-cursor-custom) for the Codex `config.toml` and generic JSON snippets. Every tool takes an optional `root`, so one server can index and serve several projects, and a project without an index is built on first use. The `.claude/state/` notes the pro-coder skill writes are part of the text index, so another model can search the same memory.

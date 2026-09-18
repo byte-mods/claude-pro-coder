@@ -50,6 +50,27 @@ pub const MIGRATIONS: &[Migration] = &[
                   tokenize = \"unicode61 tokenchars '_'\"
               );",
     },
+    Migration {
+        // v4: asset metadata for binary files (images, video, audio, PDF,
+        // Office, archives). One row per `docs` row of a non-text kind;
+        // `description` is written by `lens describe` (a model or a user)
+        // and survives re-indexing of the file. The searchable body lives
+        // in `docs_fts` like every other doc.
+        version: 4,
+        sql: "CREATE TABLE assets (
+                  doc_id INTEGER PRIMARY KEY REFERENCES docs(id) ON DELETE CASCADE,
+                  mime TEXT NOT NULL,
+                  width INTEGER,
+                  height INTEGER,
+                  duration_ms INTEGER,
+                  pages INTEGER,
+                  extracted_chars INTEGER NOT NULL DEFAULT 0,
+                  extractor TEXT NOT NULL DEFAULT 'none',
+                  description TEXT,
+                  described_by TEXT,
+                  described_at INTEGER
+              ) STRICT;",
+    },
 ];
 
 pub fn current_schema_version(conn: &Connection) -> Result<u32> {
@@ -130,7 +151,7 @@ mod tests {
     fn test_schema_v1_creates_all_tables() {
         let conn = open_in_memory();
         apply_migrations(&conn).expect("apply v1");
-        for table in ["meta", "files", "symbols", "refs", "calls", "imports", "types", "docs", "docs_fts"] {
+        for table in ["meta", "files", "symbols", "refs", "calls", "imports", "types", "docs", "docs_fts", "assets"] {
             let count: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",

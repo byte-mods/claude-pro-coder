@@ -1,5 +1,6 @@
 pub mod add;
 pub mod deps;
+pub mod describe;
 pub mod explain;
 pub mod follow;
 pub mod index;

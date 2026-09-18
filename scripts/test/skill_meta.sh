@@ -193,7 +193,7 @@ done
 
 echo "[7] v7 protocol surface"
 
-for needle in 'lens search' 'lens deps' 'lens meter --diff' '## One-shot build mode' 'Token discipline' '_tokens: ~'; do
+for needle in 'lens search' 'lens deps' 'lens describe' 'lens meter --diff' '## One-shot build mode' 'Token discipline' '_tokens: ~'; do
   if grep -qF -- "${needle}" "${skill}"; then
     pass "skill_mentions: ${needle}"
   else

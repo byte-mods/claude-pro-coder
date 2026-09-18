@@ -38,9 +38,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use lens_core::{
-    build_map, ensure_fresh, explain_symbol, file_deps, follow_symbol, list_refs, query_graph,
-    resolve_symbol_candidates, resolve_symbol_to_id, search_docs, shortest_path, slice_at,
-    FreshnessConfig, Graph, SearchOptions, Storage, TraversalMode,
+    build_map, describe_asset, ensure_fresh, explain_symbol, file_deps, follow_symbol, list_refs,
+    query_graph, resolve_symbol_candidates, resolve_symbol_to_id, search_docs,
+    set_asset_description, shortest_path, slice_at, FreshnessConfig, Graph, SearchOptions, Storage,
+    TraversalMode, ALL_KINDS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -206,6 +207,7 @@ impl Server {
             "lens_map" => tool_map(&cp.arguments, &storage, &root)?,
             "lens_search" => tool_search(&cp.arguments, &storage, &root)?,
             "lens_deps" => tool_deps(&cp.arguments, &storage, &root)?,
+            "lens_describe" => tool_describe(&cp.arguments, &mut storage, &root)?,
             other => {
                 return Err(McpError::invalid_params(format!("unknown tool: {other}")));
             }
@@ -404,7 +406,23 @@ pub fn tool_catalogue() -> Vec<Value> {
                     "budget": { "type": "integer", "minimum": 0, "description": "Token budget. Default 2000." },
                     "limit":  { "type": "integer", "minimum": 1, "description": "Maximum files to report. Default 20." },
                     "scope":  { "type": "string", "description": "Restrict to a sub-tree (project-relative path)." },
-                    "kind":   { "type": "string", "enum": ["code", "text"], "description": "Restrict to code files or text/docs." },
+                    "kind":   { "type": "string", "enum": ["code", "text", "image", "video", "audio", "pdf", "office", "archive", "binary"], "description": "Restrict to one kind of file." },
+                    "root": root_property()
+                }
+            }
+        }),
+        json!({
+            "name": "lens_describe",
+            "description": "Binary assets (images, video, audio, PDF, Office docs, archives): show extracted metadata/text and the stored description, or store a description you wrote after viewing the file once. Stored descriptions are searchable via lens_search by any model in any later session — view once, describe once, never re-read.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": { "type": "string", "description": "Project-relative file path." },
+                    "text": { "type": "string", "description": "Description to store (replaces the previous one). Omit to just read the record." },
+                    "by":   { "type": "string", "description": "Author label for the description, e.g. claude, codex. Default: the client." },
+                    "clear": { "type": "boolean", "description": "Remove the stored description." },
+                    "budget": { "type": "integer", "minimum": 0, "description": "Token budget for the extracted-text excerpt. Default 800." },
                     "root": root_property()
                 }
             }
@@ -649,8 +667,8 @@ fn tool_search(args: &Value, storage: &Storage, root: &Path) -> Result<String, M
         return Err(McpError::invalid_params("lens_search: query must not be empty"));
     }
     if let Some(k) = &a.kind {
-        if k != "code" && k != "text" {
-            return Err(McpError::invalid_params(format!("lens_search: kind must be code or text (got '{k}')")));
+        if !ALL_KINDS.contains(&k.as_str()) {
+            return Err(McpError::invalid_params(format!("lens_search: kind must be one of {} (got '{k}')", ALL_KINDS.join(", "))));
         }
     }
     let opts = SearchOptions { limit: a.limit, budget: a.budget, scope: a.scope.clone(), kind: a.kind.clone() };
@@ -658,6 +676,45 @@ fn tool_search(args: &Value, storage: &Storage, root: &Path) -> Result<String, M
     let touched: Vec<&str> = result.files.iter().map(|f| f.path.as_str()).collect();
     let rendered = crate::cmd::search::render_markdown(&result);
     Ok(crate::cmd::util::finalize(root, storage, rendered, &touched))
+}
+
+#[derive(Deserialize)]
+struct DescribeArgs {
+    path: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    by: Option<String>,
+    #[serde(default)]
+    clear: bool,
+    #[serde(default = "default_budget_800")]
+    budget: u32,
+}
+fn tool_describe(args: &Value, storage: &mut Storage, root: &Path) -> Result<String, McpError> {
+    let a: DescribeArgs = serde_json::from_value(args.clone())
+        .map_err(|e| McpError::invalid_params(format!("lens_describe: {e}")))?;
+    if a.clear && a.text.is_some() {
+        return Err(McpError::invalid_params("lens_describe: clear and text are mutually exclusive"));
+    }
+    let rel = lens_core::docs::scope_to_relative(root, Path::new(&a.path))
+        .ok_or_else(|| McpError::invalid_params(format!("path '{}' is not under the project root", a.path)))?;
+    if a.clear || a.text.is_some() {
+        let desc = if a.clear { None } else { a.text.as_deref() };
+        let ok = set_asset_description(storage, &rel, desc, a.by.as_deref().or(Some("mcp-client")))
+            .map_err(|e| McpError::internal(format!("describe: {e}")))?;
+        if !ok {
+            return Err(McpError::invalid_params(format!("'{rel}' is not an indexed asset (text/code files need no description)")));
+        }
+    }
+    let rec = describe_asset(storage, &rel)
+        .map_err(|e| McpError::internal(format!("describe: {e}")))?
+        .ok_or_else(|| McpError::invalid_params(format!("'{rel}' is not an indexed asset; run lens_search for text files")))?;
+    let rendered = crate::cmd::describe::render_markdown(&rec, a.budget);
+    Ok(crate::cmd::util::finalize(root, storage, rendered, &[]))
+}
+
+fn default_budget_800() -> u32 {
+    800
 }
 
 #[derive(Deserialize)]
@@ -779,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_tools_list_returns_all_nine_tools_with_root_property() {
+    fn test_mcp_tools_list_returns_all_ten_tools_with_root_property() {
         let req = json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}).to_string();
         let dir = tempfile::tempdir().unwrap();
         let resp = handle_message(&req, dir.path()).expect("response expected");
@@ -787,11 +844,11 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.get("name").and_then(|n| n.as_str()).unwrap()).collect();
         for expected in [
             "lens_follow", "lens_refs", "lens_query", "lens_explain", "lens_path",
-            "lens_slice", "lens_map", "lens_search", "lens_deps",
+            "lens_slice", "lens_map", "lens_search", "lens_deps", "lens_describe",
         ] {
             assert!(names.contains(&expected), "missing {expected}: {names:?}");
         }
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 10);
         for t in tools {
             assert!(t.pointer("/inputSchema/properties/root").is_some(), "tool {} lacks root", t["name"]);
         }
@@ -834,6 +891,28 @@ mod tests {
         assert!(text.contains("NOTES.md"), "{text}");
         let bad = call(dir.path(), 12, "lens_search", json!({ "query": "x", "kind": "blob" }));
         assert_jsonrpc_response(&bad, true);
+    }
+
+    #[test]
+    fn test_mcp_tools_call_describe_stores_then_search_finds_image() {
+        let dir = project_with_index();
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, b'I', b'H', b'D', b'R'];
+        png.extend_from_slice(&640u32.to_be_bytes());
+        png.extend_from_slice(&480u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        fs::write(dir.path().join("shot.png"), &png).unwrap();
+        std::env::set_var("LENS_FRESHNESS_THROTTLE_SECONDS", "0");
+        let shown = call(dir.path(), 30, "lens_describe", json!({ "path": "shot.png" }));
+        std::env::remove_var("LENS_FRESHNESS_THROTTLE_SECONDS");
+        assert_jsonrpc_response(&shown, false);
+        assert!(text_of(&shown).contains("640×480"), "{}", text_of(&shown));
+        let stored = call(dir.path(), 31, "lens_describe", json!({ "path": "shot.png", "text": "Login screen mockup with error banner", "by": "claude" }));
+        assert_jsonrpc_response(&stored, false);
+        assert!(text_of(&stored).contains("> Login screen mockup"));
+        let found = call(dir.path(), 32, "lens_search", json!({ "query": "error banner", "kind": "image" }));
+        assert!(text_of(&found).contains("shot.png"), "{}", text_of(&found));
+        let bad = call(dir.path(), 33, "lens_describe", json!({ "path": "a.rs", "text": "x" }));
+        assert_eq!(bad.pointer("/error/code").and_then(|v| v.as_i64()), Some(INVALID_PARAMS as i64));
     }
 
     #[test]

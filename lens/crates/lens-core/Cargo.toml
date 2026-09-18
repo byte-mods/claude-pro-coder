@@ -26,6 +26,7 @@ rayon = "1.10"
 notify = "6.1"
 notify-debouncer-mini = "0.4"
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
+flate2 = "1.0"
 url = "2.5"
 
 [dev-dependencies]

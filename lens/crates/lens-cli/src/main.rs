@@ -40,6 +40,9 @@ fn dispatch(cli: cli::Cli) -> Result<(), u8> {
             cmd::search::run(&query, budget, limit, scope.as_deref(), kind.as_deref())
         }
         (Some(Command::Deps { path }), _, _) => cmd::deps::run(&path),
+        (Some(Command::Describe { path, text, by, clear, budget }), _, _) => {
+            cmd::describe::run(&path, text.as_deref(), by.as_deref(), clear, budget)
+        }
         (Some(Command::Meter { json, since, reset, diff, record_input, record_output }), _, _) => {
             cmd::meter::run(json, since.as_deref(), reset, diff, record_input, record_output)
         }
@@ -84,6 +87,7 @@ fn short_help() -> &'static str {
      map       architecture summary (budget-capped)\n  \
      search    keyword search over every text file (any language)\n  \
      deps      file-level connections (imports / calls in and out)\n  \
+     describe  show / store what a binary asset (image, pdf, video, …) is\n  \
      meter     persistent token meter (+ lens tokens emitted / saved)\n  \
      watch     reindex on file changes\n  \
      mcp       stdio MCP server\n\n\

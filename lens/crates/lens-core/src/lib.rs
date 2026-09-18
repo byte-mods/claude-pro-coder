@@ -1,5 +1,6 @@
 //! lens-core — symbol-aware code index.
 
+pub mod assets;
 pub mod deps;
 pub mod docs;
 pub mod error;
@@ -48,9 +49,11 @@ pub use query::{
 };
 pub use tokens::{estimate_tokens, fit_lines};
 pub use docs::{
-    file_token_estimate, search_docs, sync_docs, total_file_tokens, DocsStats, SearchFile, SearchHit,
-    SearchOptions, SearchResult,
+    describe as describe_asset, file_token_estimate, search_docs, set_description as set_asset_description,
+    sync_docs, total_file_tokens, AssetRecord, DocsStats, SearchFile, SearchHit, SearchOptions,
+    SearchResult, ALL_KINDS,
 };
+pub use assets::AssetMeta;
 pub use storage::{
     diff_against_index, insert_extracted_files, resolve_cross_file_references, update_files,
     FileDiff, InsertStats, ResolveStats, Storage, UpdateStats,

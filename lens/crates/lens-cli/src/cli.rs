@@ -121,7 +121,7 @@ pub enum Command {
         /// Restrict to a sub-tree (project-relative or absolute path).
         #[arg(long)]
         scope: Option<PathBuf>,
-        /// Restrict to `code` (files with a symbol extractor) or `text`.
+        /// Restrict to a kind: code, text, image, video, audio, pdf, office, archive, binary.
         #[arg(long)]
         kind: Option<String>,
     },
@@ -130,6 +130,25 @@ pub enum Command {
     Deps {
         /// File path (project-relative or absolute).
         path: PathBuf,
+    },
+    /// Show what lens knows about a binary asset (image / video / audio /
+    /// PDF / Office / archive), or store a description a model wrote after
+    /// viewing it once — searchable forever after via `lens search`.
+    Describe {
+        /// File path (project-relative or absolute).
+        path: PathBuf,
+        /// Store this description (replaces any previous one).
+        #[arg(long)]
+        text: Option<String>,
+        /// Who wrote the description (e.g. claude, codex, user). Default: user.
+        #[arg(long)]
+        by: Option<String>,
+        /// Remove the stored description.
+        #[arg(long)]
+        clear: bool,
+        /// Token budget for the extracted-text excerpt.
+        #[arg(long, default_value_t = 800)]
+        budget: u32,
     },
     /// Token meter (input/output, persistent across /clear).
     Meter {

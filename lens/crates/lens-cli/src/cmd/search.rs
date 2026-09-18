@@ -37,8 +37,8 @@ pub fn run_with_root(
         return Err(2);
     }
     if let Some(k) = kind {
-        if k != "code" && k != "text" {
-            eprintln!("lens search: --kind must be `code` or `text` (got '{k}').");
+        if !lens_core::ALL_KINDS.contains(&k) {
+            eprintln!("lens search: --kind must be one of {} (got '{k}').", lens_core::ALL_KINDS.join(", "));
             return Err(2);
         }
     }
@@ -105,6 +105,9 @@ pub fn render_markdown(result: &SearchResult) -> String {
         hits,
         if result.truncated { " • _truncated — raise --budget / --limit or narrow --scope_" } else { "" }
     );
+    if result.relaxed {
+        let _ = writeln!(&mut out, "_No file contains every term; showing files matching any term, best first. Use `AND` to force all._");
+    }
     let _ = writeln!(&mut out);
     for f in &result.files {
         let _ = writeln!(
@@ -188,6 +191,7 @@ mod tests {
             }],
             files_matched: 1,
             truncated: false,
+            relaxed: false,
             budget: 2000,
             estimated_tokens: 40,
         };
@@ -209,9 +213,11 @@ mod tests {
             files: vec![SearchFile { path: "x".into(), kind: "text".into(), hits: vec![], matching_lines: 0 }],
             files_matched: 30,
             truncated: true,
+            relaxed: true,
             budget: 100,
             estimated_tokens: 100,
         };
+        assert!(render_markdown(&trunc).contains("matching any term"));
         assert!(render_markdown(&trunc).contains("truncated"));
     }
 }
