@@ -17,8 +17,8 @@ Clone the repo and install the skill in **symlink mode** so edits to
 `pro-coder/SKILL.md` are picked up by Claude Code without re-running install:
 
 ```bash
-git clone https://github.com/sudeep-dasgupta/claude-skill.git
-cd claude-skill
+git clone https://github.com/byte-mods/claude-pro-coder.git
+cd claude-pro-coder
 ./scripts/install.sh --symlink
 ```
 
@@ -27,8 +27,10 @@ Symlink mode points `~/.claude/skills/pro-coder` at the repo's
 where expected is a no-op.
 
 If you do not have Rust installed, pass `--no-lens` to skip the cargo build
-and `--no-mcp` to skip the `~/.claude.json` wire-up. The skill still works
-in fallback mode (Read/Grep/Glob).
+and `--no-mcp` to skip the `~/.claude.json` wire-up. Note that the skill
+requires lens at runtime (v6+) — an install without it refuses to run at
+first invocation, so `--no-lens` is only useful when you already have a
+`lens` binary on `$PATH`.
 
 To switch back to copy mode (or away from the repo entirely):
 
@@ -40,8 +42,16 @@ To switch back to copy mode (or away from the repo entirely):
 ## Running the tests
 
 ```bash
-bash scripts/test/round_trip.sh
+bash scripts/test/round_trip.sh          # install pipeline + SKILL.md meta-tests
+(cd lens && cargo test --workspace)      # lens: core + CLI unit tests + end-to-end CLI tests
 ```
+
+Lens is vendored under `lens/` with local patches recorded in
+`lens/VENDOR.txt`. If you change lens sources, append to that file's patch
+log, bump the workspace version in `lens/Cargo.toml` when the CLI surface
+changes, and keep `cargo test --workspace` green — the install script hashes
+`lens/` to decide whether to rebuild, so every source change triggers a
+rebuild on the next `./scripts/install.sh`.
 
 The suite is self-contained — no external test framework, just bash 3.2+ and
 the scripts under test. It covers:

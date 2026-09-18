@@ -102,6 +102,34 @@ pub enum Command {
         /// Maximum traversal depth.
         #[arg(long, default_value_t = 2)]
         depth: u32,
+        /// Token budget cap — depth is reduced until the rendering fits.
+        #[arg(long, default_value_t = 2000)]
+        budget: u32,
+    },
+    /// Keyword search over every text file (any language, docs, config,
+    /// agent state notes) — budget-capped `file:line` hits with the
+    /// enclosing symbol.
+    Search {
+        /// Free-text query; each word is prefix-matched (`ensure fre`).
+        query: String,
+        /// Token budget cap for the result.
+        #[arg(long, default_value_t = 2000)]
+        budget: u32,
+        /// Maximum number of files to report.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        /// Restrict to a sub-tree (project-relative or absolute path).
+        #[arg(long)]
+        scope: Option<PathBuf>,
+        /// Restrict to `code` (files with a symbol extractor) or `text`.
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    /// File-level connections: imports in both directions, call edges per
+    /// counterpart file, most-called symbols.
+    Deps {
+        /// File path (project-relative or absolute).
+        path: PathBuf,
     },
     /// Token meter (input/output, persistent across /clear).
     Meter {
@@ -131,6 +159,11 @@ pub enum Command {
         #[arg(long, default_value_t = 200)]
         debounce: u64,
     },
-    /// Run as a stdio MCP server (for Claude Code).
-    Mcp,
+    /// Run as a stdio MCP server (Claude Code, Codex, or any MCP client).
+    Mcp {
+        /// Default project root (defaults to the current directory). Every
+        /// tool also accepts a per-call `root` argument for multi-project use.
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
 }

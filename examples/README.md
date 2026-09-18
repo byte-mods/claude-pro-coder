@@ -30,12 +30,14 @@ The prompts assume:
 - The pro-coder skill is installed (run `./scripts/install.sh` from
   the repo root).
 - `lens` is built and on `$PATH` (the install does this unless you
-  passed `--no-lens`). Without lens, the skill drops to fallback mode
-  (Read/Grep/Glob) and the prompts still work — just slower.
+  passed `--no-lens`). Lens is required — the skill aborts at bootstrap
+  with an install pointer if the binary is missing.
 - The MCP server is registered in `~/.claude.json` (the install does
   this unless you passed `--no-mcp`).
 
-If your project is in a language lens does not index (currently:
-languages outside Rust, Python, TypeScript/TSX, JavaScript/JSX, MJS,
-CJS, Go, and Dart), the skill auto-detects and uses fallback mode. The
-examples still apply; the prompts don't change.
+If your project is in a language lens's symbol graph does not cover
+(anything outside Rust, Python, TypeScript/TSX, JavaScript/JSX/MJS/CJS,
+Go, Dart, Java, and C#), the symbol verbs return empty slices but
+`lens search` still indexes every text file, so the skill navigates by
+keyword search plus targeted reads. The examples still apply; the
+prompts don't change.

@@ -16,10 +16,11 @@ use rusqlite::OptionalExtension;
 use crate::error::{LensError, Result};
 use crate::query::QueryNode;
 use crate::storage::Storage;
+use crate::tokens::{estimate_tokens, fit_lines};
 
-/// Approximate char-per-token ratio used to translate a token budget into a
-/// char budget when truncating body text. Conservative — most code tokenises
-/// into shorter pieces than English prose.
+/// Legacy char-per-token ratio. Budget fitting now uses
+/// [`crate::tokens::estimate_tokens`]; this constant is retained only for
+/// callers that still want a coarse chars→tokens conversion.
 pub const CHARS_PER_TOKEN: u32 = 4;
 
 /// Maximum number of callers returned, deterministic by smallest
@@ -128,29 +129,13 @@ pub fn follow_symbol(
     //    still useful even without body text.
     let body_text = read_body_slice(root, &file_path, body_start, body_end);
 
-    // 3. Fit body to char budget (token budget * CHARS_PER_TOKEN), reserving
-    //    space for the signature. Drop body lines tail-first.
-    let max_chars = (budget_tokens as usize).saturating_mul(CHARS_PER_TOKEN as usize);
-    let sig_chars = signature.as_ref().map(|s| s.len() + 1).unwrap_or(0); // +1 for newline.
-    let remaining = max_chars.saturating_sub(sig_chars);
+    // 3. Fit body to the token budget using the code-aware estimator,
+    //    reserving space for the signature (always shown) and the doc
+    //    comment (shown ahead of the body). Drop body lines tail-first.
+    let reserved = signature.as_ref().map(|s| estimate_tokens(s) + 1).unwrap_or(0)
+        + doc_comment.as_ref().map(|d| estimate_tokens(d) + 1).unwrap_or(0);
     let lines: Vec<&str> = body_text.lines().collect();
-    let mut kept: Vec<String> = Vec::with_capacity(lines.len());
-    let mut total: usize = 0;
-    let mut truncated = false;
-    for line in &lines {
-        let cost = line.len() + 1; // +1 for the newline we conceptually rejoin with.
-        if total.saturating_add(cost) > remaining {
-            truncated = true;
-            break;
-        }
-        total = total.saturating_add(cost);
-        kept.push((*line).to_string());
-    }
-    if !truncated && kept.len() < lines.len() {
-        // Shouldn't normally happen, but covers an edge where iteration
-        // exits without setting the flag.
-        truncated = true;
-    }
+    let (kept, truncated) = fit_lines(&lines, budget_tokens, reserved);
 
     // 4. Top callers, deterministic by smallest symbol_id ascending.
     //    GROUP BY collapses multiple call rows from the same caller to a

@@ -60,9 +60,12 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use crate::error::{LensError, Result};
 use crate::storage::Storage;
 
-/// Average tokens contributed per visited symbol when rendered. Tunable;
-/// raise to truncate harder, lower to fit more nodes per budget.
-pub const AVG_NODE_TOKENS: u32 = 80;
+/// Average tokens contributed per visited symbol when rendered. A rendered
+/// node line is `- \`crate::mod::name\` (kind) — \`path/file.rs:123\`` — about
+/// 20–28 tokens under a BPE vocabulary. v1 used 80, which made a 2000-token
+/// budget stop at ~25 nodes when the real output was under 700 tokens.
+/// Measured with [`crate::tokens::estimate_tokens`] over the lens tree.
+pub const AVG_NODE_TOKENS: u32 = 24;
 
 /// Hard cap on seed nodes per question. Prevents a vague question from
 /// fanning out into thousands of low-relevance matches.
@@ -605,8 +608,8 @@ mod tests {
         insert_extracted_files(&mut s, &files).unwrap();
         resolve_cross_file_references(&mut s).unwrap();
 
-        // 1 seed (~80 tokens) + budget = 200 → can fit at most 2 more.
-        let r = query_graph(&s, "center", TraversalMode::Bfs, 200).unwrap();
+        // 1 seed + budget = 3 × AVG_NODE_TOKENS → can fit at most 2 more.
+        let r = query_graph(&s, "center", TraversalMode::Bfs, AVG_NODE_TOKENS * 3).unwrap();
         assert!(r.nodes.len() <= 4, "tight budget must truncate; got {}", r.nodes.len());
         assert!(!r.nodes.is_empty());
     }

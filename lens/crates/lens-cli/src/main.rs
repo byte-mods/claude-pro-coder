@@ -33,13 +33,19 @@ fn dispatch(cli: cli::Cli) -> Result<(), u8> {
         }
         (Some(Command::Path { from, to }), _, _) => cmd::path::run(&from, &to),
         (Some(Command::Explain { symbol }), _, _) => cmd::explain::run(&symbol),
-        (Some(Command::Map { scope, depth }), _, _) => cmd::map::run(scope.as_deref(), depth),
+        (Some(Command::Map { scope, depth, budget }), _, _) => {
+            cmd::map::run(scope.as_deref(), depth, budget)
+        }
+        (Some(Command::Search { query, budget, limit, scope, kind }), _, _) => {
+            cmd::search::run(&query, budget, limit, scope.as_deref(), kind.as_deref())
+        }
+        (Some(Command::Deps { path }), _, _) => cmd::deps::run(&path),
         (Some(Command::Meter { json, since, reset, diff, record_input, record_output }), _, _) => {
             cmd::meter::run(json, since.as_deref(), reset, diff, record_input, record_output)
         }
         (Some(Command::Watch { debounce }), _, _) => cmd::watch::run(debounce),
         (Some(Command::Add { url }), _, _) => cmd::add::run(&url),
-        (Some(Command::Mcp), _, _) => cmd::mcp::run(),
+        (Some(Command::Mcp { root }), _, _) => cmd::mcp::run(root.as_deref()),
         (None, Some(path), _) if !path.exists() => {
             eprintln!(
                 "lens: '{}' is not a known subcommand and does not exist as a path. \
@@ -75,8 +81,10 @@ fn short_help() -> &'static str {
      path      shortest path between two symbols (graphify-compat)\n  \
      explain   plain-language explanation of a symbol (graphify-compat)\n  \
      add       fetch a URL into .lens/raw/ and index it (graphify-compat)\n  \
-     map       architecture summary\n  \
-     meter     persistent token meter\n  \
+     map       architecture summary (budget-capped)\n  \
+     search    keyword search over every text file (any language)\n  \
+     deps      file-level connections (imports / calls in and out)\n  \
+     meter     persistent token meter (+ lens tokens emitted / saved)\n  \
      watch     reindex on file changes\n  \
      mcp       stdio MCP server\n\n\
      Run `lens --help` for full clap-rendered help."

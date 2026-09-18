@@ -15,7 +15,7 @@ use std::path::Path;
 use rusqlite::OptionalExtension;
 
 use crate::error::{LensError, Result};
-use crate::follow::CHARS_PER_TOKEN;
+use crate::tokens::{estimate_tokens, fit_lines};
 use crate::query::QueryNode;
 use crate::storage::Storage;
 
@@ -124,22 +124,9 @@ pub fn slice_at(
     // 3. Read body bytes from disk and fit to budget. Best-effort: missing
     //    or post-modified files yield empty body, never a panic.
     let body_text = read_body_slice(root, &file_path_out, body_start, body_end);
-    let max_chars = (budget_tokens as usize).saturating_mul(CHARS_PER_TOKEN as usize);
-    let sig_chars = signature.as_ref().map(|s| s.len() + 1).unwrap_or(0);
-    let remaining = max_chars.saturating_sub(sig_chars);
+    let reserved = signature.as_ref().map(|s| estimate_tokens(s) + 1).unwrap_or(0);
     let lines: Vec<&str> = body_text.lines().collect();
-    let mut kept: Vec<String> = Vec::with_capacity(lines.len());
-    let mut total: usize = 0;
-    let mut truncated = false;
-    for line_str in &lines {
-        let cost = line_str.len() + 1;
-        if total.saturating_add(cost) > remaining {
-            truncated = true;
-            break;
-        }
-        total = total.saturating_add(cost);
-        kept.push((*line_str).to_string());
-    }
+    let (kept, truncated) = fit_lines(&lines, budget_tokens, reserved);
 
     // 4. Same-file imports, source order, capped.
     let imports = load_imports_for_file(storage, file_id)?;

@@ -7,12 +7,9 @@ use std::path::Path;
 use lens_core::{slice_at, SliceResult};
 
 pub fn run(location: &str, budget: u32) -> Result<(), u8> {
-    let cwd = match std::env::current_dir() {
+    let cwd = match crate::cmd::util::cwd_project_root("slice") {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("lens slice: cannot resolve current directory: {e}");
-            return Err(1);
-        }
+        Err(code) => return Err(code),
     };
     run_with_root(&cwd, location, budget)
 }
@@ -46,7 +43,9 @@ pub fn run_with_root(root: &Path, location: &str, budget: u32) -> Result<(), u8>
         }
     };
 
-    print!("{}", render_markdown(location, &result));
+    let focus_file = result.focus.file_path.clone();
+    let rendered = render_markdown(location, &result);
+    crate::cmd::util::finish(root, &storage, rendered, &[focus_file.as_str()]);
     Ok(())
 }
 

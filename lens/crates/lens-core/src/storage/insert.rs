@@ -64,6 +64,27 @@ pub fn insert_extracted_files(
     Ok(stats)
 }
 
+/// Full rebuild: wipe every code-index row (`files` and, via FK CASCADE,
+/// `symbols` / `refs` / `calls` / `imports` / `types`) and insert `files`
+/// fresh, in ONE transaction so readers never observe an empty index.
+/// This is what makes `lens index` idempotent — re-running it on an
+/// already-indexed project replaces the index instead of failing on the
+/// `files.path` UNIQUE constraint. The `docs` tables are left alone; they
+/// are synchronised separately by [`crate::docs::sync_docs`].
+pub fn rebuild_extracted_files(
+    storage: &mut Storage,
+    files: &[ExtractedFile],
+) -> Result<InsertStats> {
+    let now = unix_seconds_now();
+    let tx = storage.transaction()?;
+    tx.execute("DELETE FROM files", [])
+        .map_err(|e| LensError::other(format!("rebuild: clear files: {e}")))?;
+    let stats = write_files_into_tx(&tx, files, now)?;
+    tx.commit()
+        .map_err(|e| LensError::other(format!("commit rebuild transaction: {e}")))?;
+    Ok(stats)
+}
+
 /// Bulk-insert `files` inside an externally-supplied transaction. Used by both
 /// [`insert_extracted_files`] (which opens its own transaction) and
 /// [`crate::storage::update::update_files`] (which combines DELETE+insert in
@@ -763,5 +784,26 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+    #[test]
+    fn test_rebuild_replaces_existing_index_atomically() {
+        let (_g, mut s) = tmp_storage();
+        let v1 = rust_file("src/a.rs", vec![make_symbol("a::old", "old", "function", None)]);
+        insert_extracted_files(&mut s, &[v1]).unwrap();
+        let v2 = rust_file("src/a.rs", vec![make_symbol("a::new", "new", "function", None)]);
+        let v3 = rust_file("src/b.rs", vec![]);
+        let stats = rebuild_extracted_files(&mut s, &[v2, v3]).unwrap();
+        assert_eq!(stats.files, 2);
+        let qnames: Vec<String> = s
+            .connection()
+            .prepare("SELECT qualified_name FROM symbols ORDER BY qualified_name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(qnames, vec!["a::new"], "old rows must be gone after rebuild");
+        let files: i64 = s.connection().query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)).unwrap();
+        assert_eq!(files, 2);
     }
 }

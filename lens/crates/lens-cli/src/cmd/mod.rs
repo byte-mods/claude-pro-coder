@@ -1,4 +1,5 @@
 pub mod add;
+pub mod deps;
 pub mod explain;
 pub mod follow;
 pub mod index;
@@ -9,6 +10,7 @@ pub mod meter;
 pub mod path;
 pub mod query;
 pub mod refs;
+pub mod search;
 pub mod slice;
 pub mod stub;
 pub mod update;

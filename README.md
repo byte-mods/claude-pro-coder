@@ -2,7 +2,7 @@
 
 > A Claude Code skill that turns Claude into a two-agent engineering team — a hyper-rigorous **architect** that plans and implements, and an adversarial **QA reviewer** that gates every task. They iterate until the work is provably correct, not just plausibly correct.
 
-Bundled with [`lens`](#lens--token-efficient-retrieval) — a symbol-aware code map that lets Claude pull minimal slices of your codebase instead of dumping whole files into context. Token-efficient, structural retrieval. Wired up as an MCP server so Claude calls lens verbs as structured tools, not Bash.
+Bundled with [`lens`](#lens--token-efficient-retrieval) — an IDE-grade code index and cross-session memory that lets Claude (or any MCP client: Codex, Cursor, a custom agent) pull minimal, budget-capped slices of your codebase instead of dumping whole files into context: symbol graph for eight languages, keyword search over *every* text file in any language, file-to-file connections, and a token meter that reports exactly how much context each call saved. Wired up as an MCP server so the model calls lens verbs as structured tools, not Bash.
 
 Invoke with `/pro-coder` inside Claude Code.
 
@@ -13,8 +13,8 @@ Invoke with `/pro-coder` inside Claude Code.
 For a typical macOS / Linux dev machine with Rust + Claude Code already installed:
 
 ```bash
-git clone https://github.com/sudeep-dasgupta/claude-skill.git ~/code/claude-skill
-cd ~/code/claude-skill
+git clone https://github.com/byte-mods/claude-pro-coder.git ~/code/claude-pro-coder
+cd ~/code/claude-pro-coder
 ./scripts/install.sh
 ```
 
@@ -26,7 +26,7 @@ The script installs three things:
 
 Open Claude Code in any project and type `/pro-coder` (engineering tasks) or `/diagram` (architecture visualizations).
 
-If you don't have Rust, the install still works — the skill auto-detects the missing binary and falls back to `Read`/`Grep`/`Glob`. See [Prerequisites](#prerequisites).
+Rust is required: the install builds the `lens` binary and the skill refuses to run without it. See [Prerequisites](#prerequisites).
 
 ---
 
@@ -42,7 +42,7 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 - [Command reference](#command-reference)
 - [Lens — token-efficient retrieval](#lens--token-efficient-retrieval)
 - [How it works — two agents, one team](#how-it-works--two-agents-one-team)
-- [The 6-phase loop (Brainiac-OS v5)](#the-6-phase-loop-brainiac-os-v5)
+- [The 6-phase loop (Brainiac-OS v7)](#the-6-phase-loop-brainiac-os-v7)
 - [Examples](#examples)
 - [Update](#update)
 - [Uninstall](#uninstall)
@@ -61,17 +61,20 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 | **Two-agent QA loop** | An adversarial **super-qa** subagent gates every task and every section. Read-only, structured verdicts, unbounded loop with stuck-loop detection. PASS requires zero `BLOCKER` and zero `MAJOR` defects. | `pro-coder/SKILL.md` (P4.5, P5) |
 | **6-phase workflow** | Comprehend → Research → Plan → Implement+Test → Audit → Section Boundary. Active phase declared on every response. | `pro-coder/SKILL.md` |
 | **Architecture diagrams** | Generate visual Mermaid flowcharts of the codebase using lens for symbol-aware analysis. Outputs `ARCHITECTURE.md` at the project root — viewable in GitHub, VS Code, any Mermaid renderer. | `diagram/SKILL.md` |
-| **Symbol-aware retrieval (lens)** | Budget-capped `lens follow`, `lens query`, `lens refs`, `lens slice`, `lens explain`, `lens path`, `lens map`. ~1500 tokens for a function definition + signature + body + callers regardless of file size. | `lens/` crate, `~/.claude/bin/lens` |
-| **MCP-native tool surface** | Lens runs as an MCP stdio server (`lens mcp`) auto-wired into `~/.claude.json`. Claude calls `lens_follow`, `lens_refs`, `lens_query`, `lens_explain`, `lens_path`, `lens_slice`, `lens_map` as structured tools — no Bash boilerplate, no string-parsing of stdout. | `scripts/install-mcp.sh`, `~/.claude.json` |
+| **Symbol-aware retrieval (lens)** | Budget-capped `lens follow`, `lens query`, `lens refs`, `lens slice`, `lens explain`, `lens path`, `lens map --budget`, `lens deps`. ~1500 tokens for a function definition + doc + signature + body + callers regardless of file size. Budgets are fitted with a code-aware token estimator, and every call ends with a `tokens emitted / saved` footer. | `lens/` crate, `~/.claude/bin/lens` |
+| **Any-language search + memory** | `lens search "<words>"` — FTS5 keyword search over every text file in the project (any language, docs, config, shell) *and* the agent's notes under `.claude/state/` (indexed even when gitignored). Ranked per file, budget-capped, each hit annotated with its enclosing symbol. The capped replacement for a tree-wide `Grep`, and the recall path for prior-session notes. | `lens search`, `lens_search` MCP tool |
+| **File connections** | `lens deps <file>` — imports in both directions (resolved to project files), call edges per counterpart file, most-called symbols. Cross-file calls resolve the way real code writes them (`from pkg.mod import f`, `import { f } from "./mod"`, `use crate::a::b`, `self.method()`, Go package imports). | `lens deps`, `lens_deps` MCP tool |
+| **MCP-native tool surface** | Lens runs as an MCP stdio server (`lens mcp`) auto-wired into `~/.claude.json`. Nine structured tools (`lens_follow`, `lens_refs`, `lens_query`, `lens_explain`, `lens_path`, `lens_slice`, `lens_map`, `lens_search`, `lens_deps`), each with an optional `root` for multi-project sessions. Auto-freshness on every call, auto-bootstrap of a missing index, cached graph. Works with Claude Code, Codex, Cursor, or any MCP client. | `scripts/install-mcp.sh`, `~/.claude.json` |
 | **Persistent code-map** | Per-area Markdown notes under `<project>/.claude/state/code-map/` capturing API shapes, invariants, callers, gotchas with `file:line` anchors. Survives across sessions; reconciled at every section close. | `<project>/.claude/state/code-map/*.md` |
 | **Section snapshots** | At each section boundary (5+ tasks or explicit `section boundary` keyword), the agent writes a structured snapshot of verified facts, open invariants, and the next-section blast radius — then stops. The next session resumes from the snapshot, not from a stale conversation tail. | `<project>/.claude/state/current_section.md` |
 | **CLAUDE.md proposal queue** | The agent never writes to `CLAUDE.md`. Suggested project-contract additions are appended (with file:line justification + confidence) to `<project>/.claude/state/claude_md_proposals.md` for your review. | `<project>/.claude/state/claude_md_proposals.md` |
 | **Chain-of-thought enforcement** | Before any task is implemented, pro-coder emits a visible `**Chain-of-thought (T<n>):**` block in the conversation walking through the goal, files implicated, edge cases, failure modes, and verification approach. Before every super-qa spawn (task-level and section-level), it emits a visible `**Super-qa briefing:**` block listing exactly what the reviewer should verify. Super-qa itself emits a visible CoT block before its verdict. Internal `<thinking>` is not enough — the user sees what the agent is about to do, before it does it. | `pro-coder/SKILL.md` (P4 step 0a, P4.5, P5) |
 | **Lens-required** | Lens is mandatory. The skill aborts at bootstrap if the `lens` binary is not on `$PATH`. There is no fallback mode. (Lens supports Rust, Python, TypeScript, JavaScript, Go, Dart, Java, C# — on unsupported-language projects the index is empty and lens calls return nothing useful, but the skill still runs because lens *is* installed.) | bootstrap step 5 in `SKILL.md` |
-| **Token meter** | `lens meter` keeps a persistent input/output token tally across `/clear`s and sessions. `--diff` since last call, `--since 1h`, `--json` for scripts. | lens binary |
+| **Token meter** | `lens meter` keeps a persistent tally across `/clear`s and sessions: tokens each lens call emitted, tokens it saved versus reading the touched files whole, and the leverage ratio — recorded automatically by every read verb. `--diff` since last call, `--since 1h`, `--json` for scripts. The skill reports the section's numbers in a **Tokens** line at every section close. | lens binary |
+| **Token discipline + one-shot build mode** | v7 of the protocol: default budgets, narrow before raising, no whole-file `Read` of a file lens already sliced, `lens search` instead of tree-wide `Grep`. For "build me X end-to-end" requests: an objective contract with verifiable acceptance checks, every section planned up front, continuous section boundaries re-anchored from disk, and done only when the end-to-end verification passes QA. | `pro-coder/SKILL.md` (P1, One-shot build mode) |
 | **Idempotent install + atomic file ops** | `install.sh` re-runs are no-ops when source matches dest (SKILL.md byte-equality + lens source-hash). Copy mode stages into a sibling tmp dir then `mv` (same-FS atomic). Symlink mode replaces real dirs explicitly. Uninstall reaps orphan staging dirs from interrupted prior installs. | `scripts/install.sh`, `scripts/uninstall.sh`, `scripts/_lib.sh` |
 | **Safe-dest guard** | All destructive operations refuse to run on `/`, `$HOME`, or any system path (`/etc`, `/var`, `/usr`, `/private`, `/Applications`, `/Network`, `/Volumes`, `/System`, `/Library`, `/opt`, `/boot`, `/dev`, `/proc`, `/sys`, `/bin`, `/sbin`, `/home`, `/root`, `/srv`, `/run`, `/lib`, `/lib64`, `/mnt`, `/media`). Paths are canonicalised first — `..`-traversal bypasses (e.g. `--dest ~/skills/../../../etc`) trip the guard. | `scripts/_lib.sh` |
-| **Committed regression suite** | `scripts/test/round_trip.sh` runs 73 assertions: canonicalisation, safe-dest guard, orphan-staging reap, copy + symlink round-trips, idempotency, extended-flag forms, SKILL.md meta-tests (frontmatter, required sections, P-ref resolution, code-fence balance), and the `--strict` allow-list + root-refusal guards. Self-cleaning, CI-friendly. | `scripts/test/round_trip.sh` |
+| **Committed regression suite** | `scripts/test/round_trip.sh` runs 73 assertions: canonicalisation, safe-dest guard, orphan-staging reap, copy + symlink round-trips, idempotency, extended-flag forms, SKILL.md meta-tests (36 checks: frontmatter, required sections, P-ref resolution, code-fence balance, no fallback-mode language, v7 surface), and the `--strict` allow-list + root-refusal guards. Lens ships 666 Rust tests (`cargo test --workspace`). Both run in CI. | `scripts/test/round_trip.sh`, `lens/` |
 
 ---
 
@@ -88,7 +91,7 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 
 **If `python3` is missing:** `install-mcp.sh` prints the JSON snippet you need to add to `~/.claude.json` manually and exits 1. Skill + lens still install; only the MCP wire-up is skipped. Lens still works via the Bash CLI in that case — you just lose the structured-tool path.
 
-**Lens language scope (today):** Rust, Python, TypeScript (`.ts`/`.tsx`), JavaScript (`.js`/`.jsx`/`.mjs`/`.cjs`), Go (`.go`), Dart (`.dart`), Java (`.java`), C# (`.cs`). On unsupported-language codebases, `lens index` produces an empty index — the skill still runs (lens *is* installed, the contract is met) but lens calls return nothing useful, and pro-coder reads files directly for those projects. This is not "fallback mode"; it is just an unsupported-language project. More languages are upstream work in [`lens`](https://github.com/sudeep-dasgupta/lens).
+**Lens language scope (today):** the *symbol graph* covers Rust, Python, TypeScript (`.ts`/`.tsx`), JavaScript (`.js`/`.jsx`/`.mjs`/`.cjs`), Go (`.go`), Dart (`.dart`), Java (`.java`), C# (`.cs`). The *text index* behind `lens search` covers every non-binary file in any language (Ruby, C++, Kotlin, SQL, shell, YAML, Markdown, …), so on an unsupported-language codebase the symbol verbs return empty slices but `lens search` still serves ranked `file:line` hits and the skill navigates by search plus targeted reads. This is not "fallback mode"; it is just an unsupported-language project. More symbol-graph languages are upstream work in [`lens`](https://github.com/sudeep-dasgupta/lens).
 
 ---
 
@@ -97,7 +100,7 @@ If you don't have Rust, the install still works — the skill auto-detects the m
 ### Step 1 — Clone the repo
 
 ```bash
-git clone https://github.com/sudeep-dasgupta/claude-skill.git ~/code/claude-skill
+git clone https://github.com/byte-mods/claude-pro-coder.git ~/code/claude-pro-coder
 ```
 
 (Replace `sudeep-dasgupta` if you forked it.)
@@ -105,7 +108,7 @@ git clone https://github.com/sudeep-dasgupta/claude-skill.git ~/code/claude-skil
 ### Step 2 — Run the install script
 
 ```bash
-cd ~/code/claude-skill
+cd ~/code/claude-pro-coder
 ./scripts/install.sh
 ```
 
@@ -159,7 +162,7 @@ mkdir -p ~/.claude/skills ~/.claude/bin
 cp -r ~/code/claude-skill/pro-coder ~/.claude/skills/
 
 # Lens binary
-(cd ~/code/claude-skill/lens && cargo build --release)
+(cd ~/code/claude-pro-coder/lens && cargo build --release)
 cp ~/code/claude-skill/lens/target/release/lens ~/.claude/bin/lens
 chmod +x ~/.claude/bin/lens
 
@@ -187,8 +190,8 @@ cd ~/some-project
 lens init
 lens index
 # If the project uses a supported language: "lens index: wrote N files / N symbols / ... to .lens/index.db"
-# If the project is unsupported (Ruby, C++, etc.): "lens index: wrote 0 files, 0 symbols" — this
-# is expected; the skill auto-detects an empty index and falls back to Read/Grep/Glob at runtime.
+# If the project's language has no symbol extractor (Ruby, C++, etc.): "lens index: wrote 0 files,
+# 0 symbols" followed by "text index N files" — expected; `lens search` still covers every file.
 # See the FAQ for the full language list.
 
 # 4. Inspect the MCP wire-up
@@ -292,7 +295,7 @@ Before the first task, Claude:
 - Creates `.claude/state/` and `.claude/state/code-map/` if missing.
 - Asks **once** whether `.claude/state/` should be gitignored or committed (`a` or `b`); answer is recorded in `.claude/state/gitignore_policy` and never asked again.
 - Reads `CLAUDE.md` if present; surfaces a one-line note if absent (does not create it).
-- Detects the lens binary on `$PATH` and the `.lens/index.db` state. Runs `lens init && lens index` on first encounter. **If the `lens` binary is missing, the skill aborts at bootstrap with an install pointer — there is no fallback mode.** If lens is present but the project has 0 supported-language symbols (e.g. a C++ codebase), the skill still runs — lens calls return empty slices and pro-coder reads files directly; this is not "fallback mode," it is just an unsupported-language project.
+- Detects the lens binary on `$PATH` and the `.lens/index.db` state. Runs `lens init && lens index` on first encounter (both idempotent). **If the `lens` binary is missing, the skill aborts at bootstrap with an install pointer — there is no fallback mode.** If lens is present but the project has 0 supported-language symbols (e.g. a C++ codebase), the skill still runs — symbol verbs return empty slices while `lens search` covers every file; this is not "fallback mode," it is just an unsupported-language project. A greenfield project (no code yet) indexes 0 files and fills in as tasks create files.
 
 ### 2. The 6-phase loop
 
@@ -306,13 +309,13 @@ Active phase is declared at the top of every response (e.g. `## P4 — T2: orpha
 
 | Phase | What Claude does | Tools |
 |---|---|---|
-| **P1 Comprehend** | Restate goal. Read `CLAUDE.md` + prior section snapshot. Build the blast-radius code-map for the task: load existing notes from `.claude/state/code-map/` and verify them against current source. | `lens query`, `lens follow`, `Read` |
-| **P2 Research** | Read every file in the blast radius end-to-end. Cite `file:line`. Catalog idioms, invariants, failure modes. | `lens follow`, `lens refs`, `Read`, `Grep` |
+| **P1 Comprehend** | Restate goal. Read `CLAUDE.md` + prior section snapshot. Build the blast-radius code-map for the task: load existing notes from `.claude/state/code-map/` and verify them against current source. Token discipline: default budgets, read the footer, `lens search` not `Grep`. | `lens map --budget`, `lens query`, `lens follow`, `lens deps`, `lens search` |
+| **P2 Research** | Read every file in the blast radius end-to-end. Cite `file:line`. Catalog idioms, invariants, failure modes. | `lens follow`, `lens refs`, `lens slice`, `lens search`, `Read` (anchored ranges) |
 | **P3 Plan** | Decompose into atomic tasks (≤100 LOC each, named verifying tests). Wait for ack only on big plans (>5 files, new dep, public API change, CI change). | (text) |
 | **P4 Implement & Test** | One task at a time. Idiomatic code, mental compile, tests in the same task, run the full suite. | `Edit`, `Write`, `Bash` |
 | **P4.5 Super-QA** | Spawn an isolated `Agent(subagent_type: general-purpose)` with the task spec, file list, and test names. Subagent has zero memory of the conversation; rebuilds its own understanding from current source. Returns `VERDICT: PASS` or `FAIL` with `BLOCKER`/`MAJOR`/`MINOR` defects. Loop until PASS. | `Agent` |
 | **P5 Audit** | Requirement-traceability matrix. Adversarial review (empty/max/malformed input, partial failures, memory pressure). **Section-level super-qa pass over the cumulative diff.** Update code-map notes. Run `lens . --update`. | `Agent`, `Edit`, `Bash` |
-| **P6 Boundary** | Write `.claude/state/current_section.md`. Append CLAUDE.md proposals if any. Announce, **stop.** User runs `/clear`. | `Write` |
+| **P6 Boundary** | Write `.claude/state/current_section.md`. Append CLAUDE.md proposals if any. Report `lens meter --diff` in the **Tokens** line. Announce, **stop** — or, in one-shot build mode, re-anchor from disk and continue into the next section. | `Write`, `lens meter --diff` |
 
 ### 3. The MCP tool surface
 
@@ -328,9 +331,13 @@ The tools currently registered:
 | `lens_explain` | `lens explain <symbol>` | Plain-language summary of a symbol + neighbours |
 | `lens_path` | `lens path "A" "B"` | Shortest connection between two symbols |
 | `lens_slice` | `lens slice <file>:<line> --budget N` | Minimal context around a location |
-| `lens_map` | `lens map [--scope DIR] [--depth N]` | Architecture summary by directory |
+| `lens_map` | `lens map [--scope DIR] [--depth N] [--budget N]` | Architecture summary by directory, depth auto-reduced to fit the budget |
+| `lens_search` | `lens search "<words>" [--budget N] [--limit N] [--scope DIR] [--kind code\|text]` | Keyword search over every text file (any language + docs + `.claude/state` notes) |
+| `lens_deps` | `lens deps <file>` | File-level imports / calls in both directions + hot symbols |
 
-Without MCP, Claude falls back to `Bash` invocations of the same lens commands. The skill works either way; MCP is the lower-friction path.
+Every tool also accepts `root` (absolute path) so one server can serve several projects; the server's default is `lens mcp --root PATH` or its spawn directory. Every call runs the freshness check, builds a missing index on first use, and returns the same `tokens emitted / saved` footer as the CLI.
+
+Without MCP, Claude invokes the same lens commands through `Bash`. The skill works either way; MCP is the lower-friction path.
 
 ### 4. Where state lives between sessions
 
@@ -466,13 +473,18 @@ lens query "<question>" [--dfs] [--budget N]            # BFS/DFS over the symbo
 lens explain <symbol>                                   # plain-language summary
 lens path <from> <to>                                   # shortest connection between two symbols
 lens slice <file>:<line> [--budget N]                   # minimal context around a location
-lens map [--scope DIR] [--depth N]                      # architecture summary
+lens map [--scope DIR] [--depth N] [--budget N]         # architecture summary, depth reduced to fit budget
+lens search "<words>" [--budget N] [--limit N] [--scope DIR] [--kind code|text]
+                                                        # keyword search over every text file (any language)
+lens deps <file>                                        # imports / calls in and out, hot symbols
 ```
+
+All read verbs work from any sub-directory of the project (they walk up to `.lens/`), and every one ends with `_tokens: ~N emitted • ~M saved vs reading K files whole_`.
 
 **Telemetry:**
 
 ```
-lens meter                                              # current input/output token tally
+lens meter                                              # tokens emitted / saved by lens + leverage, plus harness-recorded turn totals
 lens meter --json                                       # JSON output
 lens meter --diff                                       # delta since last call
 lens meter --since 1h                                   # delta over last hour
@@ -484,7 +496,7 @@ lens meter --record-input N --record-output M           # incremental record (ca
 
 ```
 lens add <url>                                          # fetch http(s)/file:// to .lens/raw/, index if recognised
-lens mcp                                                # run as a stdio MCP server (used by ~/.claude.json)
+lens mcp [--root PATH]                                  # run as a stdio MCP server (used by ~/.claude.json and other MCP clients)
 ```
 
 **Environment variables:**
@@ -493,12 +505,13 @@ lens mcp                                                # run as a stdio MCP ser
 |---|---|---|
 | `LENS_NO_AUTO_UPDATE` | unset | Set to `1` to disable auto-freshness for a session. |
 | `LENS_FRESHNESS_THROTTLE_SECONDS` | `5` | Tune the auto-freshness throttle window. |
+| `LENS_NO_METER` | unset | Set to `1` to stop read verbs from recording into `.lens/meter.txt`. |
 
 ---
 
 ## Lens — token-efficient retrieval
 
-`lens` is a Rust CLI vendored at `lens/` in this repo. It builds a SQLite-backed map of definitions, references, calls, imports, and type relationships across your codebase, then exposes the high-leverage retrieval verbs listed above.
+`lens` is a Rust CLI vendored at `lens/` in this repo. It builds a SQLite-backed map of definitions, references, calls, imports, and type relationships across your codebase — plus an FTS5 text index of every file — then exposes the high-leverage retrieval verbs listed above. Think of it as the index an IDE keeps, made queryable by a model within a token budget.
 
 | Verb | What it returns | Token cost |
 |---|---|---|
@@ -508,8 +521,10 @@ lens mcp                                                # run as a stdio MCP ser
 | `lens explain <symbol>` | Plain-language summary of a symbol and its neighbours | small |
 | `lens path "A" "B"` | Shortest connection between two symbols | small |
 | `lens slice <file>:<line> --budget 1500` | Minimal context around a location | ≤ budget |
-| `lens map [--scope DIR] [--depth N]` | Architecture summary by directory with hot-spot ranking | medium |
-| `lens meter [--json] [--diff] [--reset]` | Persistent token counters across sessions / `/clear` | tiny |
+| `lens map [--scope DIR] [--depth N] [--budget N]` | Architecture summary by directory with hot-spot ranking; depth folds to fit | ≤ budget |
+| `lens search "<words>" [--budget N] [--scope DIR] [--kind code\|text]` | Ranked `file:line` hits across every text file, any language, with enclosing symbols | ≤ budget |
+| `lens deps <file>` | Imports in/out, call edges per file in/out, most-called symbols | small |
+| `lens meter [--json] [--diff] [--reset]` | Persistent counters across sessions / `/clear`: lens tokens emitted, tokens saved, leverage | tiny |
 | `lens watch [--debounce MS]` | Auto-reindex on file changes; long-running | (server mode) |
 | `lens add <url>` | Fetch + index a remote source file | n/a |
 | `lens mcp` | Stdio MCP server — Claude Code calls verbs as tools, no Bash | (server mode) |
@@ -521,9 +536,39 @@ The win versus `Read` + `Grep`: `lens follow some_function --budget 1500` return
 
 **Cross-language disambiguation.** When `lens follow Foo` matches symbols in multiple languages, the ambiguity message tags each candidate with its language and explicitly flags "cross-language: rust, python, go". The resolved follow output also names the language so Claude knows which language slice it received. Use `--from FILE:LINE` to disambiguate.
 
-**Auto-freshness.** Every read-mode lens command (`follow`/`refs`/`query`/`explain`/`path`/`slice`/`map`) checks for file drift and runs an incremental update if anything changed since last index. Throttled (default 5 s window via `.lens/freshness.txt`) so a flurry of lens calls doesn't repeatedly walk the tree. Opt out: `LENS_NO_AUTO_UPDATE=1`. Tune: `LENS_FRESHNESS_THROTTLE_SECONDS=N`.
+**Auto-freshness.** Every read-mode lens command (CLI and MCP) checks for file drift and runs an incremental update if anything changed since last index. Unchanged files are recognised by size + mtime and never re-read, so the check is one `stat` per file (a no-change `lens update` on this repository takes ~40 ms). Throttled (default 5 s window via `.lens/freshness.txt`) so a flurry of lens calls doesn't repeatedly walk the tree. Opt out: `LENS_NO_AUTO_UPDATE=1`. Tune: `LENS_FRESHNESS_THROTTLE_SECONDS=N`.
+
+**Cross-file calls resolve the way code is written.** Beyond exact qualified-name matches, lens links `from pkg.mod import f; f()` and `import pkg.mod as m; m.f()` (Python, absolute and relative), `use crate::a::b; b()` (Rust, workspace crate roots detected), `import { f } from "./mod"` (TypeScript/JavaScript, extension and `index.*` resolution), Go package imports (`store.Open()`), and `self.` / `this.` receivers. A bare name defined exactly once in the project resolves too; dotted names never use that rule, so `list.append` cannot bind to an unrelated `append`. On this repository 2 833 of 10 319 call sites resolve — those edges are what `lens refs`, `lens follow`'s callers, `lens map`'s hot spots and `lens query` traverse.
+
+**Tokens: measured, not guessed.** Budgets are fitted with a code-aware estimator (identifier sub-words, operator merging, indentation, newlines — about 3.2 chars per token on real code, versus the flat 4 that under-counted dense code by up to 40%). Every read verb ends with `_tokens: ~N emitted • ~M saved vs reading K files whole_`, and `lens meter` accumulates those numbers across sessions with a leverage ratio. A typical section on this repository runs at 20–25× (whole-file tokens ÷ lens tokens).
+
+**Search is memory.** `lens search` indexes every non-binary text file under 512 KiB — code in any language, docs, config, shell — and *always* includes `.claude/state/**`, `current-tasks.md`, `schema.txt`, `CLAUDE.md`, `AGENTS.md` and `README.md`, even when `.gitignore` excludes them. That is what lets the skill (or any model over MCP) recall its own code-map notes and section snapshots by keyword instead of re-reading them. `.git/`, `.lens/`, `.history/`, `node_modules/`, lock files and `.env*` are never indexed.
 
 **MCP mode** (`lens mcp`) is the deepest integration: Claude Code calls each lens verb as a structured tool with JSON Schema input contracts, response-as-content-blocks, no Bash boilerplate. Auto-wired into `~/.claude.json` by `./scripts/install.sh` (pass `--no-mcp` to skip).
+
+### Using lens from other agents (Codex, GPT, Cursor, custom)
+
+The MCP server is client-agnostic: newline-delimited JSON-RPC over stdio, standard `initialize` / `tools/list` / `tools/call` / `ping`. Point any MCP client at the binary and it gets the same nine tools, the same budgets and the same token footers Claude gets.
+
+**Codex CLI** (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.lens]
+command = "/Users/you/.claude/bin/lens"
+args = ["mcp"]
+```
+
+**Generic JSON config** (Cursor, Windsurf, Claude Desktop, most SDK clients) — pin a project with `--root` when the client does not spawn the server inside the project directory:
+
+```json
+{
+  "mcpServers": {
+    "lens": { "command": "/Users/you/.claude/bin/lens", "args": ["mcp", "--root", "/path/to/project"] }
+  }
+}
+```
+
+One server can serve several projects: pass `"root": "/path/to/other"` in any tool call. A project without an index is indexed on first use. The pro-coder protocol itself is a Claude Code skill, but its lens-facing rules (token discipline, search-not-grep, `lens deps` for blast radius) apply unchanged to any model driving these tools.
 
 Lens is open source at [github.com/sudeep-dasgupta/lens](https://github.com/sudeep-dasgupta/lens). The version shipped here is pinned in `lens/VENDOR.txt`.
 
@@ -590,7 +635,7 @@ Lens is open source at [github.com/sudeep-dasgupta/lens](https://github.com/sude
 
 ---
 
-## The 6-phase loop (Brainiac-OS v5)
+## The 6-phase loop (Brainiac-OS v7)
 
 Every code-touching task runs through six phases. The active phase is declared at the top of every response.
 
@@ -650,7 +695,7 @@ Concrete sample prompts live in [`examples/`](examples/README.md). Each shows on
 ## Update
 
 ```bash
-cd ~/code/claude-skill && git pull
+cd ~/code/claude-pro-coder && git pull
 ./scripts/install.sh --force        # rebuild + reinstall
 ```
 
@@ -663,7 +708,7 @@ After updating, restart Claude Code so it picks up any changed MCP server config
 ## Uninstall
 
 ```bash
-cd ~/code/claude-skill
+cd ~/code/claude-pro-coder
 ./scripts/uninstall.sh              # remove skill + lens binary + mcpServers.lens entry
 ./scripts/uninstall.sh --keep-lens  # remove skill + MCP, keep the lens binary
 ./scripts/uninstall.sh --keep-mcp   # remove skill + lens, keep the claude.json entry
@@ -689,7 +734,7 @@ The repo ships with a committed regression suite at `scripts/test/round_trip.sh`
 bash scripts/test/round_trip.sh
 ```
 
-Sub-tests (73 assertions total):
+Sub-tests (73 assertions total; the SKILL.md meta-test delegates to 36 sub-checks):
 
 | Group | What it covers |
 |---|---|
@@ -699,10 +744,16 @@ Sub-tests (73 assertions total):
 | `test_round_trip_copy` (10) | install --copy → assert → uninstall → assert; install + uninstall idempotency |
 | `test_round_trip_symlink` (11) | install --symlink → assert → uninstall → assert; symlink target verification; install + uninstall idempotency |
 | `test_install_extended_flags` (12) | `install.sh --dest=VALUE` and `--quiet` and `--dry-run`; `uninstall.sh --dest=VALUE`; empty `--flag=` rejection |
-| `test_skill_meta` (1, delegates to `skill_meta.sh` for 27 sub-checks) | SKILL.md frontmatter, required sections, P-reference resolution, markdown code-fence balance, no placeholder leaks |
+| `test_skill_meta` (1, delegates to `skill_meta.sh` for 36 sub-checks) | SKILL.md frontmatter, required sections, P-reference resolution, markdown code-fence balance, no placeholder leaks, no fallback-mode language in SKILL.md / README.md / install.sh, v7 protocol surface (`lens search`, `lens deps`, token discipline, one-shot build mode) |
 | `test_strict_and_root_guards` (11) | `sc_assert_strict_allowed` accepts paths under `~/.claude/`, rejects others incl. `..`-traversal; `sc_assert_not_root` refuses EUID=0 by default and accepts under `--allow-root`; end-to-end `install.sh --strict` |
 
 The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `rm -rf` at exit), **CI-friendly** (exit 0 on PASS, non-zero with numeric failure count otherwise), and **cwd-independent** (passes from any directory).
+
+Lens has its own suite — 506 core tests, 118 CLI unit tests and 40 end-to-end CLI tests:
+
+```bash
+cd lens && cargo test --workspace
+```
 
 ---
 
@@ -736,7 +787,7 @@ The suite is **self-cleaning** (single shared parent jail under `/tmp`, single `
 - Restart Claude Code — MCP servers are spawned at startup, not hot-reloaded.
 
 **Lens reports `0 symbols` indexed.**
-- This is expected for non-Rust/Python/TypeScript/JavaScript/Go/Dart/Java/C# codebases. The skill still runs — lens *is* installed, the contract is met — but lens calls return empty slices and pro-coder reads files directly for the rest of the session. This is not "fallback mode," it is just an unsupported-language project.
+- This is expected for non-Rust/Python/TypeScript/JavaScript/Go/Dart/Java/C# codebases. The skill still runs — lens *is* installed, the contract is met — symbol verbs return empty slices while `lens search` covers every file, so pro-coder navigates by search plus targeted reads. This is not "fallback mode," it is just an unsupported-language project.
 - If your project IS in a supported language and you still see 0 symbols, run `lens index` manually and check `.lens/index.db` exists. File an issue at the [lens repo](https://github.com/sudeep-dasgupta/lens) with the project structure.
 
 **Install script refuses to run with "refusing to operate on system path".**
@@ -775,7 +826,10 @@ After editing, re-run `./scripts/install.sh --force` (or `git pull && ./scripts/
 No. v6 requires lens — the skill aborts at bootstrap if the `lens` binary is not on `$PATH`, with an install pointer in the error message. (v5 had a `Read`/`Grep`/`Glob` fallback mode; v6 removed it because it was a strictly worse code-comprehension strategy and the agent would silently degrade to it.) On an unsupported-language project (anything outside Rust, Python, TypeScript, JavaScript, Go, Dart, Java, C#), lens still indexes — it just produces an empty index, and pro-coder reads files directly for that project. The contract — "lens is installed" — is met.
 
 **Q: What does lens actually buy me?**
-Symbol-aware, budget-capped slices. `lens follow some_function --budget 1500` returns the definition + signature + body + caller list in ~1500 tokens, regardless of how big the file is. `lens query "auth middleware" --budget 2000` returns the symbol-graph seeds for that topic with `file:line` anchors. By contrast, `Read` on a 2000-line file returns ~50k tokens and `Grep` returns line matches without structural context. Token savings compound across the per-task and section-level super-qa loops, where the same blast radius gets re-traversed multiple times.
+Symbol-aware, budget-capped slices — and a receipt. `lens follow some_function --budget 1500` returns the doc + definition + signature + body + caller list in ~1500 tokens, regardless of how big the file is. `lens query "auth middleware" --budget 2000` returns the symbol-graph seeds for that topic with `file:line` anchors. `lens search "retry backoff"` returns ranked `file:line` hits across every file in any language instead of a wall of grep output. By contrast, `Read` on a 2000-line file returns ~50k tokens and `Grep` returns every match without structural context. Every call ends with `tokens emitted / saved`, and `lens meter` totals them; on this repository a section typically runs at 20–25× leverage. Savings compound across the per-task and section-level super-qa loops, where the same blast radius gets re-traversed multiple times.
+
+**Q: Can GPT / Codex / Cursor use lens too?**
+Yes. `lens mcp` is a standard MCP stdio server; see [Using lens from other agents](#using-lens-from-other-agents-codex-gpt-cursor-custom) for the Codex `config.toml` and generic JSON snippets. Every tool takes an optional `root`, so one server can index and serve several projects, and a project without an index is built on first use. The `.claude/state/` notes the pro-coder skill writes are part of the text index, so another model can search the same memory.
 
 **Q: Does Claude Code launch lens itself, or do I have to keep it running?**
 Claude Code launches lens automatically as an MCP stdio server at startup, via the `mcpServers.lens` entry in `~/.claude.json`. You don't keep anything running. The binary lifecycle is owned by Claude Code.
@@ -799,7 +853,7 @@ The Agent tool surfaces the subagent's report inline. Super-coder also records t
 You can — but the skill will refuse to run without lens in v6. To remove just the binary: `rm ~/.claude/bin/lens ~/.claude/bin/.lens.installed.sha`, then `./scripts/install-mcp.sh --remove` to clean up the now-broken MCP entry. The skill files stay installed but pro-coder will abort at first invocation with an install pointer. To re-enable the skill, re-run `./scripts/install-lens.sh`.
 
 **Q: Can I use this on a TypeScript / Go / C++ project?**
-Yes for TypeScript, Go, Dart, Java, and C# (lens indexes all five — plus Rust, Python, JavaScript). For other languages (C++, Ruby, etc.) `lens index` produces an empty index — the skill still runs (lens is installed, the contract is met) but lens calls return nothing useful and pro-coder reads files directly for that project. You lose lens's token-efficient symbol retrieval but the rest of the loop works as normal. More languages are tracked at the [lens repo](https://github.com/sudeep-dasgupta/lens).
+Yes for TypeScript, Go, Dart, Java, and C# (lens's symbol graph covers all five — plus Rust, Python, JavaScript). For other languages (C++, Ruby, Kotlin, …) the symbol graph is empty but `lens search` indexes every file, so the skill still navigates by ranked keyword search plus targeted reads; you lose `follow`/`refs`/`deps` structure but keep budget-capped retrieval. More symbol-graph languages are tracked at the [lens repo](https://github.com/sudeep-dasgupta/lens).
 
 **Q: Where do I look if something seems off?**
 - `<project>/.claude/state/current_section.md` — what the agent thinks it just did.
@@ -818,4 +872,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgements
 
-Built on the **Brainiac-OS v5** system prompt (code-map-first / code-map-last workflow with section-boundary context resets) extended with the super-qa adversarial-review loop, and powered by [`lens`](https://github.com/sudeep-dasgupta/lens) — a symbol-aware Rust CLI vendored under `lens/` — for budget-capped, structural code retrieval.
+Built on the **Brainiac-OS v7** system prompt (code-map-first / code-map-last workflow with section-boundary context resets) extended with the super-qa adversarial-review loop, and powered by [`lens`](https://github.com/sudeep-dasgupta/lens) — a symbol-aware Rust CLI vendored under `lens/` — for budget-capped, structural code retrieval.

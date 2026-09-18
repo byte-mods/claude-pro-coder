@@ -26,8 +26,77 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::error::Result;
+use crate::error::{LensError, Result};
 use crate::query::{EdgeKind, Graph, QueryEdge, QueryNode};
+use crate::storage::Storage;
+
+/// One candidate produced by [`resolve_symbol_candidates`] — the same
+/// shape as [`crate::query::SymbolMeta`] plus the id, so CLI verbs can
+/// print an ambiguity listing without loading the whole graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolCandidate {
+    pub symbol_id: i64,
+    pub qualified_name: String,
+    pub name: String,
+    pub kind: String,
+    pub file_path: String,
+    pub start_line: i64,
+    pub language: String,
+}
+
+/// SQL-backed twin of [`resolve_symbol_to_id`] with identical tier
+/// semantics (exact qname → exact name → `::name`/`.name` suffix →
+/// substring), returning full candidate rows. `lens follow` / `lens refs`
+/// use this instead of `Graph::load` so resolving one symbol costs a few
+/// indexed lookups rather than a scan of every symbol, call, type and
+/// import row — the difference between milliseconds and seconds on a
+/// 100K-symbol index.
+pub fn resolve_symbol_candidates(storage: &Storage, query: &str) -> Result<Vec<SymbolCandidate>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    const SELECT: &str = "SELECT s.id, s.qualified_name, s.name, s.kind, f.path, s.start_line, f.language
+                          FROM symbols s JOIN files f ON f.id = s.file_id";
+    // `substr` with a negative start counts from the end; comparing against
+    // the separator + query avoids LIKE's `_` wildcard pitfalls.
+    let tiers: [String; 4] = [
+        format!("{SELECT} WHERE s.qualified_name = ?1 ORDER BY s.id ASC"),
+        format!("{SELECT} WHERE s.name = ?1 ORDER BY s.id ASC"),
+        format!(
+            "{SELECT} WHERE substr(s.qualified_name, -length(?1) - 2) = '::' || ?1
+                        OR substr(s.qualified_name, -length(?1) - 1) = '.' || ?1
+             ORDER BY s.id ASC"
+        ),
+        format!("{SELECT} WHERE instr(s.qualified_name, ?1) > 0 ORDER BY s.id ASC"),
+    ];
+    let conn = storage.connection();
+    for sql in &tiers {
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| LensError::other(format!("resolve: prepare: {e}")))?;
+        let rows = stmt
+            .query_map(rusqlite::params![query], |r| {
+                Ok(SymbolCandidate {
+                    symbol_id: r.get(0)?,
+                    qualified_name: r.get(1)?,
+                    name: r.get(2)?,
+                    kind: r.get(3)?,
+                    file_path: r.get(4)?,
+                    start_line: r.get(5)?,
+                    language: r.get(6)?,
+                })
+            })
+            .map_err(|e| LensError::other(format!("resolve: query: {e}")))?;
+        let found: Vec<SymbolCandidate> = rows
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| LensError::other(format!("resolve: collect: {e}")))?;
+        if !found.is_empty() {
+            return Ok(found);
+        }
+    }
+    Ok(Vec::new())
+}
 
 /// One shortest path between two symbols.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,5 +508,38 @@ mod tests {
         let p = shortest_path(&g, from, to).unwrap().unwrap();
         assert_eq!(p.distance, 1);
         assert_eq!(p.edges[0].kind, EdgeKind::Parent);
+    }
+    #[test]
+    fn test_resolve_symbol_candidates_matches_graph_tiers() {
+        let (_g, mut s) = tmp_storage();
+        let f = file(
+            "a.rs",
+            vec![
+                sym("crate::foo::bar", "bar", None),
+                sym("crate::baz::bar", "bar", None),
+                sym("crate::foobar", "foobar", None),
+            ],
+        );
+        insert_extracted_files(&mut s, &[f]).unwrap();
+        let graph = Graph::load(&s).unwrap();
+        for q in ["crate::foo::bar", "bar", "foo::bar", "oob", "nothing_here", ""] {
+            let via_graph = resolve_symbol_to_id(&graph, q);
+            let via_sql: Vec<i64> = resolve_symbol_candidates(&s, q).unwrap().iter().map(|c| c.symbol_id).collect();
+            assert_eq!(via_graph, via_sql, "tier mismatch for query {q:?}");
+        }
+        let c = resolve_symbol_candidates(&s, "crate::foo::bar").unwrap();
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].language, "rust");
+        assert_eq!(c[0].file_path, "a.rs");
+    }
+
+    #[test]
+    fn test_resolve_symbol_candidates_underscore_is_literal_not_wildcard() {
+        let (_g, mut s) = tmp_storage();
+        let f = file("a.py", vec![sym("m.a_b", "a_b", None), sym("m.axb", "axb", None)]);
+        insert_extracted_files(&mut s, &[f]).unwrap();
+        let c = resolve_symbol_candidates(&s, "m.a_b").unwrap();
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].name, "a_b");
     }
 }

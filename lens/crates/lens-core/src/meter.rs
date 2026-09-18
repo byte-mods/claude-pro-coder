@@ -22,11 +22,21 @@ use crate::error::{LensError, Result};
 const METER_FILENAME: &str = "meter.txt";
 
 /// Cumulative counters since the last `--reset`.
+///
+/// `input_tokens` / `output_tokens` / `calls` are the opt-in, wrapper-recorded
+/// Claude-turn totals. `lens_emitted_tokens` / `lens_saved_tokens` /
+/// `lens_calls` are recorded automatically by every lens read verb: what
+/// lens put into the model's context, and what the model would have spent
+/// reading the touched files whole instead. The difference is the point of
+/// the tool — surface it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MeterCounters {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub calls: u64,
+    pub lens_emitted_tokens: u64,
+    pub lens_saved_tokens: u64,
+    pub lens_calls: u64,
 }
 
 /// On-disk meter state. Holds current counters plus a snapshot taken at the
@@ -50,6 +60,15 @@ impl MeterState {
             input_tokens: self.current.input_tokens.saturating_sub(self.last_invoked.input_tokens),
             output_tokens: self.current.output_tokens.saturating_sub(self.last_invoked.output_tokens),
             calls: self.current.calls.saturating_sub(self.last_invoked.calls),
+            lens_emitted_tokens: self
+                .current
+                .lens_emitted_tokens
+                .saturating_sub(self.last_invoked.lens_emitted_tokens),
+            lens_saved_tokens: self
+                .current
+                .lens_saved_tokens
+                .saturating_sub(self.last_invoked.lens_saved_tokens),
+            lens_calls: self.current.lens_calls.saturating_sub(self.last_invoked.lens_calls),
         }
     }
 }
@@ -97,6 +116,12 @@ pub fn parse_state(s: &str) -> MeterState {
             "last_invoked_calls" => state.last_invoked.calls = v,
             "last_updated_unix" => state.last_updated_unix = v,
             "last_invoked_unix" => state.last_invoked_unix = v,
+            "lens_emitted_tokens" => state.current.lens_emitted_tokens = v,
+            "lens_saved_tokens" => state.current.lens_saved_tokens = v,
+            "lens_calls" => state.current.lens_calls = v,
+            "last_invoked_lens_emitted_tokens" => state.last_invoked.lens_emitted_tokens = v,
+            "last_invoked_lens_saved_tokens" => state.last_invoked.lens_saved_tokens = v,
+            "last_invoked_lens_calls" => state.last_invoked.lens_calls = v,
             _ => {}
         }
     }
@@ -113,7 +138,13 @@ pub fn render_state(s: &MeterState) -> String {
          last_invoked_output_tokens={}\n\
          last_invoked_calls={}\n\
          last_updated_unix={}\n\
-         last_invoked_unix={}\n",
+         last_invoked_unix={}\n\
+         lens_emitted_tokens={}\n\
+         lens_saved_tokens={}\n\
+         lens_calls={}\n\
+         last_invoked_lens_emitted_tokens={}\n\
+         last_invoked_lens_saved_tokens={}\n\
+         last_invoked_lens_calls={}\n",
         s.current.input_tokens,
         s.current.output_tokens,
         s.current.calls,
@@ -121,7 +152,13 @@ pub fn render_state(s: &MeterState) -> String {
         s.last_invoked.output_tokens,
         s.last_invoked.calls,
         s.last_updated_unix,
-        s.last_invoked_unix
+        s.last_invoked_unix,
+        s.current.lens_emitted_tokens,
+        s.current.lens_saved_tokens,
+        s.current.lens_calls,
+        s.last_invoked.lens_emitted_tokens,
+        s.last_invoked.lens_saved_tokens,
+        s.last_invoked.lens_calls,
     )
 }
 
@@ -147,6 +184,29 @@ pub fn record(state: &mut MeterState, input: u64, output: u64) {
     state.current.output_tokens = state.current.output_tokens.saturating_add(output);
     state.current.calls = state.current.calls.saturating_add(1);
     state.last_updated_unix = now_unix();
+}
+
+/// Record one lens read verb: `emitted` tokens were written to the model's
+/// context; `saved` is the estimate of what reading the touched files whole
+/// would have cost minus `emitted` (floored at zero by the caller).
+pub fn record_lens(state: &mut MeterState, emitted: u64, saved: u64) {
+    state.current.lens_emitted_tokens = state.current.lens_emitted_tokens.saturating_add(emitted);
+    state.current.lens_saved_tokens = state.current.lens_saved_tokens.saturating_add(saved);
+    state.current.lens_calls = state.current.lens_calls.saturating_add(1);
+    state.last_updated_unix = now_unix();
+}
+
+/// Convenience: read, record one lens verb, write. Never fails loudly —
+/// the meter is observability, not durable state — but returns the error
+/// so callers that care (tests) can assert on it. Honours
+/// `LENS_NO_METER=1` as an opt-out.
+pub fn record_lens_on_disk(lens_dir: &Path, emitted: u64, saved: u64) -> Result<()> {
+    if matches!(std::env::var("LENS_NO_METER").as_deref(), Ok("1") | Ok("true")) {
+        return Ok(());
+    }
+    let mut state = read_state(lens_dir)?;
+    record_lens(&mut state, emitted, saved);
+    write_state(lens_dir, &state)
 }
 
 /// Snapshot `current` into `last_invoked` and bump `last_invoked_unix`.
@@ -240,9 +300,9 @@ mod tests {
     fn test_meter_record_increments_counters_and_call_count() {
         let mut s = MeterState::default();
         record(&mut s, 1000, 500);
-        assert_eq!(s.current, MeterCounters { input_tokens: 1000, output_tokens: 500, calls: 1 });
+        assert_eq!(s.current, MeterCounters { input_tokens: 1000, output_tokens: 500, calls: 1, ..Default::default() });
         record(&mut s, 250, 125);
-        assert_eq!(s.current, MeterCounters { input_tokens: 1250, output_tokens: 625, calls: 2 });
+        assert_eq!(s.current, MeterCounters { input_tokens: 1250, output_tokens: 625, calls: 2, ..Default::default() });
     }
 
     #[test]
@@ -253,7 +313,7 @@ mod tests {
         record(&mut s, 200, 100);
         reset(&mut s);
         assert_eq!(s.current, MeterCounters::default(), "current zeroed");
-        assert_eq!(s.last_invoked, MeterCounters { input_tokens: 100, output_tokens: 50, calls: 1 });
+        assert_eq!(s.last_invoked, MeterCounters { input_tokens: 100, output_tokens: 50, calls: 1, ..Default::default() });
         assert_eq!(s.last_updated_unix, 0, "last_updated cleared on reset");
     }
 
@@ -273,7 +333,7 @@ mod tests {
         snapshot_invocation(&mut s);
         record(&mut s, 250, 125);
         let d = s.diff();
-        assert_eq!(d, MeterCounters { input_tokens: 250, output_tokens: 125, calls: 1 });
+        assert_eq!(d, MeterCounters { input_tokens: 250, output_tokens: 125, calls: 1, ..Default::default() });
     }
 
     #[test]
@@ -298,5 +358,45 @@ mod tests {
         assert_eq!(parsed.last_invoked, s.last_invoked);
         assert_eq!(parsed.last_updated_unix, s.last_updated_unix);
         assert_eq!(parsed.last_invoked_unix, s.last_invoked_unix);
+    }
+    #[test]
+    fn test_meter_record_lens_accumulates_and_round_trips() {
+        let d = tmp();
+        let mut s = MeterState::default();
+        record_lens(&mut s, 300, 4200);
+        record_lens(&mut s, 150, 800);
+        assert_eq!(s.current.lens_emitted_tokens, 450);
+        assert_eq!(s.current.lens_saved_tokens, 5000);
+        assert_eq!(s.current.lens_calls, 2);
+        assert_eq!(s.current.calls, 0, "lens verbs do not count as Claude turns");
+        write_state(d.path(), &s).unwrap();
+        let r = read_state(d.path()).unwrap();
+        assert_eq!(r.current, s.current);
+        snapshot_invocation(&mut s);
+        record_lens(&mut s, 10, 20);
+        let diff = s.diff();
+        assert_eq!(diff.lens_emitted_tokens, 10);
+        assert_eq!(diff.lens_saved_tokens, 20);
+        assert_eq!(diff.lens_calls, 1);
+    }
+
+    #[test]
+    fn test_meter_record_lens_on_disk_creates_file_and_accumulates() {
+        let d = tmp();
+        let lens_dir = d.path().join(".lens");
+        record_lens_on_disk(&lens_dir, 100, 900).unwrap();
+        record_lens_on_disk(&lens_dir, 50, 0).unwrap();
+        let s = read_state(&lens_dir).unwrap();
+        assert_eq!(s.current.lens_emitted_tokens, 150);
+        assert_eq!(s.current.lens_saved_tokens, 900);
+        assert_eq!(s.current.lens_calls, 2);
+    }
+
+    #[test]
+    fn test_meter_parse_tolerates_pre_v3_files_without_lens_keys() {
+        let s = parse_state("input_tokens=5\noutput_tokens=6\ncalls=1\n");
+        assert_eq!(s.current.input_tokens, 5);
+        assert_eq!(s.current.lens_emitted_tokens, 0);
+        assert_eq!(s.current.lens_calls, 0);
     }
 }

@@ -20,12 +20,9 @@ use lens_core::{
 /// `.lens/`. The question is `question`; mode is BFS unless `dfs` is true;
 /// the token budget caps how much is rendered.
 pub fn run(question: &str, dfs: bool, budget: u32) -> Result<(), u8> {
-    let cwd = match std::env::current_dir() {
+    let cwd = match crate::cmd::util::cwd_project_root("query") {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("lens query: cannot resolve current directory: {e}");
-            return Err(1);
-        }
+        Err(code) => return Err(code),
     };
     run_with_root(&cwd, question, dfs, budget)
 }
@@ -49,8 +46,9 @@ pub fn run_with_root(root: &Path, question: &str, dfs: bool, budget: u32) -> Res
         }
     };
 
+    let touched: Vec<&str> = result.nodes.iter().map(|n| n.file_path.as_str()).collect();
     let rendered = render_markdown(question, &result);
-    print!("{rendered}");
+    crate::cmd::util::finish(root, &storage, rendered, &touched);
     Ok(())
 }
 

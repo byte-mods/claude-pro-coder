@@ -6,15 +6,12 @@
 
 use std::path::Path;
 
-use lens_core::{list_refs, resolve_symbol_to_id, Graph, RefsResult};
+use lens_core::{list_refs, resolve_symbol_candidates, RefsResult};
 
 pub fn run(symbol: &str, limit: u32) -> Result<(), u8> {
-    let cwd = match std::env::current_dir() {
+    let cwd = match crate::cmd::util::cwd_project_root("refs") {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("lens refs: cannot resolve current directory: {e}");
-            return Err(1);
-        }
+        Err(code) => return Err(code),
     };
     run_with_root(&cwd, symbol, limit)
 }
@@ -27,15 +24,13 @@ pub fn run_with_root(root: &Path, symbol: &str, limit: u32) -> Result<(), u8> {
             return Err(1);
         }
     };
-    let graph = match Graph::load(&storage) {
-        Ok(g) => g,
+    let ids = match resolve_symbol_candidates(&storage, symbol) {
+        Ok(v) => v,
         Err(e) => {
-            eprintln!("lens refs: failed to load graph: {e}");
+            eprintln!("lens refs: resolution failed: {e}");
             return Err(1);
         }
     };
-
-    let ids = resolve_symbol_to_id(&graph, symbol);
     if ids.is_empty() {
         eprintln!("lens refs: no symbol matched '{symbol}'.");
         return Err(1);
@@ -45,18 +40,16 @@ pub fn run_with_root(root: &Path, symbol: &str, limit: u32) -> Result<(), u8> {
             "lens refs: '{symbol}' is ambiguous ({} candidates). Disambiguate with a qualified name:",
             ids.len()
         );
-        for sid in ids.iter().take(10) {
-            if let Some(meta) = graph.symbols.get(sid) {
-                eprintln!(
-                    "  - {} ({} at {}:{})",
-                    meta.qualified_name, meta.kind, meta.file_path, meta.start_line
-                );
-            }
+        for meta in ids.iter().take(10) {
+            eprintln!(
+                "  - [{}] {} ({} at {}:{})",
+                meta.language, meta.qualified_name, meta.kind, meta.file_path, meta.start_line
+            );
         }
         return Err(1);
     }
 
-    let sid = ids[0];
+    let sid = ids[0].symbol_id;
     let result = match list_refs(&storage, sid, limit) {
         Ok(Some(r)) => r,
         Ok(None) => {
@@ -71,7 +64,10 @@ pub fn run_with_root(root: &Path, symbol: &str, limit: u32) -> Result<(), u8> {
         }
     };
 
-    print!("{}", render_markdown(symbol, limit, &result));
+    let mut touched: Vec<&str> = vec![result.focus.file_path.as_str()];
+    touched.extend(result.sites.iter().map(|s| s.file_path.as_str()));
+    let rendered = render_markdown(symbol, limit, &result);
+    crate::cmd::util::finish(root, &storage, rendered, &touched);
     Ok(())
 }
 

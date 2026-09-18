@@ -26,11 +26,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::docs::sync_docs;
 use crate::error::{LensError, Result};
 use crate::extract::run_on_discovered;
 use crate::lang::Registry;
-use crate::storage::{diff_against_index, resolve_cross_file_references, update_files, Storage, UpdateStats};
-use crate::walk::discover;
+use crate::storage::{
+    apply_restamps, diff_against_index, load_file_stamps, resolve_cross_file_references,
+    update_files, Storage, UpdateStats,
+};
+use crate::walk::discover_with_stamps;
 
 /// Default minimum gap between two freshness checks. Each read within this
 /// window after a check skips the work entirely.
@@ -113,10 +117,19 @@ pub fn ensure_fresh(
     write_timestamp(&freshness_path, now_unix())?;
 
     let registry = Registry::with_default_languages();
-    let discovered = discover(root, &registry)
+    // Stat fast path: files whose size+mtime match the stored row are not
+    // re-read. See `discover_with_stamps`.
+    let stamps = load_file_stamps(storage)
+        .map_err(|e| LensError::other(format!("freshness: stamps: {e}")))?;
+    let discovered = discover_with_stamps(root, &registry, &stamps)
         .map_err(|e| LensError::other(format!("freshness: discover: {e}")))?;
     let diff = diff_against_index(storage, &discovered)
         .map_err(|e| LensError::other(format!("freshness: diff: {e}")))?;
+    apply_restamps(storage, &diff.restamp)
+        .map_err(|e| LensError::other(format!("freshness: restamp: {e}")))?;
+    // The any-language text index rides along: same stat fast path, same
+    // throttle window. Errors here are non-fatal for the symbol graph.
+    let _ = sync_docs(storage, root, &registry);
     if diff.is_empty() {
         return Ok(FreshnessOutcome::UpToDate);
     }

@@ -4,17 +4,12 @@
 
 use std::path::Path;
 
-use lens_core::{
-    follow_symbol, resolve_symbol_to_id, FollowResult, Graph,
-};
+use lens_core::{follow_symbol, resolve_symbol_candidates, FollowResult, SymbolCandidate};
 
 pub fn run(symbol: &str, from: Option<&str>, budget: u32) -> Result<(), u8> {
-    let cwd = match std::env::current_dir() {
+    let cwd = match crate::cmd::util::cwd_project_root("follow") {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("lens follow: cannot resolve current directory: {e}");
-            return Err(1);
-        }
+        Err(code) => return Err(code),
     };
     run_with_root(&cwd, symbol, from, budget)
 }
@@ -32,15 +27,14 @@ pub fn run_with_root(
             return Err(1);
         }
     };
-    let graph = match Graph::load(&storage) {
-        Ok(g) => g,
+    // Indexed SQL lookups — no full graph load for a single symbol.
+    let mut ids: Vec<SymbolCandidate> = match resolve_symbol_candidates(&storage, symbol) {
+        Ok(v) => v,
         Err(e) => {
-            eprintln!("lens follow: failed to load graph: {e}");
+            eprintln!("lens follow: resolution failed: {e}");
             return Err(1);
         }
     };
-
-    let mut ids = resolve_symbol_to_id(&graph, symbol);
     if ids.is_empty() {
         eprintln!("lens follow: no symbol matched '{symbol}'.");
         return Err(1);
@@ -49,7 +43,7 @@ pub fn run_with_root(
     // Disambiguate via --from FILE:LINE when provided.
     if let Some(from_str) = from {
         if let Some((file, line)) = parse_from(from_str) {
-            ids = narrow_by_origin(&graph, &ids, file, line);
+            ids = narrow_by_origin(ids, file, line);
             if ids.is_empty() {
                 eprintln!(
                     "lens follow: --from '{from_str}' did not match any candidate for '{symbol}'.",
@@ -68,10 +62,7 @@ pub fn run_with_root(
         // ambiguity stems from the same name living in two different
         // languages (common with utility names like `New`, `Config`,
         // `Server`).
-        let langs: std::collections::BTreeSet<&str> = ids
-            .iter()
-            .filter_map(|sid| graph.symbols.get(sid).map(|m| m.language.as_str()))
-            .collect();
+        let langs: std::collections::BTreeSet<&str> = ids.iter().map(|c| c.language.as_str()).collect();
         let cross_lang_note = if langs.len() > 1 {
             format!(" cross-language: {}", langs.iter().copied().collect::<Vec<_>>().join(", "))
         } else {
@@ -81,18 +72,16 @@ pub fn run_with_root(
             "lens follow: '{symbol}' is ambiguous ({} candidates;{cross_lang_note}). Disambiguate with --from FILE:LINE or a qualified name:",
             ids.len()
         );
-        for sid in ids.iter().take(10) {
-            if let Some(meta) = graph.symbols.get(sid) {
-                eprintln!(
-                    "  - [{}] {} ({} at {}:{})",
-                    meta.language, meta.qualified_name, meta.kind, meta.file_path, meta.start_line
-                );
-            }
+        for meta in ids.iter().take(10) {
+            eprintln!(
+                "  - [{}] {} ({} at {}:{})",
+                meta.language, meta.qualified_name, meta.kind, meta.file_path, meta.start_line
+            );
         }
         return Err(1);
     }
 
-    let sid = ids[0];
+    let sid = ids[0].symbol_id;
     let result = match follow_symbol(&storage, root, sid, budget) {
         Ok(Some(r)) => r,
         Ok(None) => {
@@ -107,7 +96,9 @@ pub fn run_with_root(
         }
     };
 
-    print!("{}", render_markdown(symbol, &result));
+    let focus_file = result.focus.file_path.clone();
+    let rendered = render_markdown(symbol, &result);
+    crate::cmd::util::finish(root, &storage, rendered, &[focus_file.as_str()]);
     Ok(())
 }
 
@@ -198,19 +189,11 @@ fn parse_from(s: &str) -> Option<(&str, u32)> {
     Some((file, line))
 }
 
-fn narrow_by_origin(graph: &Graph, ids: &[i64], file: &str, _line: u32) -> Vec<i64> {
+fn narrow_by_origin(ids: Vec<SymbolCandidate>, file: &str, _line: u32) -> Vec<SymbolCandidate> {
     // Match by file_path equality; line is informational for the user but
     // not used for narrowing in v1 — symbol start_line may not align with
     // the call-site line they typed.
-    ids.iter()
-        .copied()
-        .filter(|sid| {
-            graph
-                .symbols
-                .get(sid)
-                .is_some_and(|m| m.file_path == file)
-        })
-        .collect()
+    ids.into_iter().filter(|c| c.file_path == file).collect()
 }
 
 fn code_fence_lang(file_path: &str) -> &'static str {

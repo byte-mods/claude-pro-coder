@@ -1,9 +1,20 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
 
 use crate::error::{LensError, Result};
 use crate::lang::{LanguageId, Registry};
+
+/// What the index already knows about a file — consulted by
+/// [`discover_with_stamps`] to skip reading files whose size and mtime are
+/// unchanged. Mirrors the `files` table columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp {
+    pub size_bytes: u64,
+    pub modified_at: i64,
+    pub content_hash: [u8; 32],
+}
 
 /// One file discovered by the walker. Field order mirrors the `files` table
 /// in the SQLite schema (minus `indexed_at`, which is assigned at insert time
@@ -46,6 +57,23 @@ pub struct DiscoveredFile {
 /// **Hidden-file note.** `ignore::WalkBuilder` skips dotfiles by default
 /// (e.g. `.foo.rs`). v1 keeps this default — there is no flag to opt in.
 pub fn discover(root: &Path, registry: &Registry) -> Result<Vec<DiscoveredFile>> {
+    discover_with_stamps(root, registry, &HashMap::new())
+}
+
+/// [`discover`] with a stat fast path. For every file whose project-relative
+/// path is in `known` with an identical `(size_bytes, modified_at)`, the
+/// stored `content_hash` is reused and the file is **not read**. This turns
+/// the auto-freshness check that precedes every read verb from
+/// O(bytes in tree) into O(files in tree) in the common no-change case.
+///
+/// A file that was rewritten with identical content inside the same second
+/// and at the same size would be missed by the stamp check; `lens index`
+/// (full rebuild) and `lens update --force` bypass this path.
+pub fn discover_with_stamps(
+    root: &Path,
+    registry: &Registry,
+    known: &HashMap<String, FileStamp>,
+) -> Result<Vec<DiscoveredFile>> {
     if !root.exists() {
         return Err(LensError::invalid_path(root, "does not exist"));
     }
@@ -103,8 +131,15 @@ pub fn discover(root: &Path, registry: &Registry) -> Result<Vec<DiscoveredFile>>
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        let bytes = std::fs::read(&abs).map_err(|e| LensError::io_at(&abs, e))?;
-        let content_hash = *blake3::hash(&bytes).as_bytes();
+        let content_hash = match known.get(&rel) {
+            Some(stamp) if stamp.size_bytes == size_bytes && stamp.modified_at == modified_at => {
+                stamp.content_hash
+            }
+            _ => {
+                let bytes = std::fs::read(&abs).map_err(|e| LensError::io_at(&abs, e))?;
+                *blake3::hash(&bytes).as_bytes()
+            }
+        };
 
         out.push(DiscoveredFile {
             relative_path: rel,
@@ -318,5 +353,27 @@ mod tests {
         let r = Registry::empty();
         let files = discover(root, &r).unwrap();
         assert!(files.is_empty(), "empty registry must yield empty discovery");
+    }
+    #[test]
+    fn test_walk_with_stamps_reuses_hash_without_reading_when_stamp_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.rs"), b"fn a() {}").unwrap();
+        let r = rust_only_registry();
+        let first = discover(root, &r).unwrap();
+        assert_eq!(first.len(), 1);
+        // Feed back a *wrong* hash with the right stamp: the fast path must
+        // trust the stamp and return the stored hash untouched.
+        let mut known = HashMap::new();
+        known.insert(
+            "a.rs".to_string(),
+            FileStamp { size_bytes: first[0].size_bytes, modified_at: first[0].modified_at, content_hash: [9u8; 32] },
+        );
+        let second = discover_with_stamps(root, &r, &known).unwrap();
+        assert_eq!(second[0].content_hash, [9u8; 32], "stamp hit must reuse stored hash");
+        // A size mismatch forces a real read.
+        known.get_mut("a.rs").unwrap().size_bytes += 1;
+        let third = discover_with_stamps(root, &r, &known).unwrap();
+        assert_eq!(third[0].content_hash, first[0].content_hash, "stamp miss must re-hash");
     }
 }

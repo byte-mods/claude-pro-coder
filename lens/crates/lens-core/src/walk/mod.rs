@@ -4,4 +4,4 @@
 
 pub mod discover;
 
-pub use discover::{discover, DiscoveredFile};
+pub use discover::{discover, discover_with_stamps, DiscoveredFile, FileStamp};

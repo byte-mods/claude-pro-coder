@@ -27,9 +27,11 @@
 
 use std::collections::HashMap;
 
+use rusqlite::params;
+
 use crate::error::{LensError, Result};
 use crate::storage::Storage;
-use crate::walk::DiscoveredFile;
+use crate::walk::{DiscoveredFile, FileStamp};
 
 /// Outcome of comparing on-disk discovery against the persisted index. Each
 /// vector is sorted by `relative_path` for deterministic test output.
@@ -43,6 +45,12 @@ pub struct FileDiff {
     pub changed: Vec<DiscoveredFile>,
     pub new: Vec<DiscoveredFile>,
     pub deleted: Vec<String>,
+    /// Unchanged files whose `(size_bytes, modified_at)` stamp drifted from
+    /// the stored row (e.g. a `touch`, a checkout that rewrote identical
+    /// bytes). Their hash still matches so no re-extraction is needed, but
+    /// the stamp should be refreshed via [`apply_restamps`] so the next
+    /// [`crate::walk::discover_with_stamps`] pass can skip reading them.
+    pub restamp: Vec<(String, u64, i64)>,
 }
 
 impl FileDiff {
@@ -58,44 +66,72 @@ impl FileDiff {
     }
 }
 
+/// Load `(path → stamp)` for every indexed code file. Feed the result to
+/// [`crate::walk::discover_with_stamps`] so unchanged files are not re-read.
+///
+/// Rows with a malformed hash (not 32 bytes) are omitted so the on-disk
+/// file appears as "new" and gets re-extracted, healing the row.
+pub fn load_file_stamps(storage: &Storage) -> Result<HashMap<String, FileStamp>> {
+    let conn = storage.connection();
+    let mut stmt = conn
+        .prepare("SELECT path, content_hash, size_bytes, modified_at FROM files")
+        .map_err(|e| LensError::other(format!("prepare stamp scan: {e}")))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(|e| LensError::other(format!("query stamp scan: {e}")))?;
+    let mut map: HashMap<String, FileStamp> = HashMap::new();
+    for r in rows {
+        let (path, blob, size, mtime) = r.map_err(|e| LensError::other(format!("row stamp scan: {e}")))?;
+        if let Ok(content_hash) = <[u8; 32]>::try_from(blob.as_slice()) {
+            map.insert(path, FileStamp { size_bytes: size.max(0) as u64, modified_at: mtime, content_hash });
+        }
+    }
+    Ok(map)
+}
+
+/// Refresh `(size_bytes, modified_at)` for the paths in `restamp`. One
+/// transaction; a no-op for an empty list.
+pub fn apply_restamps(storage: &mut Storage, restamp: &[(String, u64, i64)]) -> Result<u64> {
+    if restamp.is_empty() {
+        return Ok(0);
+    }
+    let tx = storage.transaction()?;
+    let mut n: u64 = 0;
+    {
+        let mut stmt = tx
+            .prepare("UPDATE files SET size_bytes = ?1, modified_at = ?2 WHERE path = ?3")
+            .map_err(|e| LensError::other(format!("prepare restamp: {e}")))?;
+        for (path, size, mtime) in restamp {
+            n += stmt
+                .execute(params![*size as i64, *mtime, path])
+                .map_err(|e| LensError::other(format!("restamp {path}: {e}")))? as u64;
+        }
+    }
+    tx.commit().map_err(|e| LensError::other(format!("commit restamp: {e}")))?;
+    Ok(n)
+}
+
 /// Compute the diff between `discovered` (current disk state) and the persisted
 /// index in `storage`. Pure read operation — does not mutate the index.
 pub fn diff_against_index(storage: &Storage, discovered: &[DiscoveredFile]) -> Result<FileDiff> {
-    // Pull (path, hash) pairs once. The HashMap key is the project-relative
-    // path string, matching `DiscoveredFile::relative_path`.
-    let mut indexed: HashMap<String, [u8; 32]> = {
-        let conn = storage.connection();
-        let mut stmt = conn
-            .prepare("SELECT path, content_hash FROM files")
-            .map_err(|e| LensError::other(format!("prepare diff scan: {e}")))?;
-        let rows = stmt
-            .query_map([], |row| {
-                let path: String = row.get(0)?;
-                let blob: Vec<u8> = row.get(1)?;
-                Ok((path, blob))
-            })
-            .map_err(|e| LensError::other(format!("query diff scan: {e}")))?;
-        let mut map: HashMap<String, [u8; 32]> = HashMap::new();
-        for r in rows {
-            let (path, blob) = r.map_err(|e| LensError::other(format!("row diff scan: {e}")))?;
-            // The schema does not constrain hash length, but the writer always
-            // produces 32 bytes (blake3). If a row violates that invariant,
-            // treat it as a forced re-extract by NOT inserting into the map —
-            // the on-disk file will then appear as "new" and overwrite via
-            // update_files.
-            if let Ok(arr) = <[u8; 32]>::try_from(blob.as_slice()) {
-                map.insert(path, arr);
-            }
-        }
-        map
-    };
+    let mut indexed = load_file_stamps(storage)?;
 
     let mut diff = FileDiff::default();
     for d in discovered {
         match indexed.remove(&d.relative_path) {
-            Some(stored_hash) => {
-                if stored_hash == d.content_hash {
+            Some(stamp) => {
+                if stamp.content_hash == d.content_hash {
                     diff.unchanged.push(d.relative_path.clone());
+                    if stamp.size_bytes != d.size_bytes || stamp.modified_at != d.modified_at {
+                        diff.restamp.push((d.relative_path.clone(), d.size_bytes, d.modified_at));
+                    }
                 } else {
                     diff.changed.push(d.clone());
                 }
@@ -108,6 +144,7 @@ pub fn diff_against_index(storage: &Storage, discovered: &[DiscoveredFile]) -> R
     diff.deleted.extend(indexed.into_keys());
 
     diff.unchanged.sort();
+    diff.restamp.sort();
     diff.changed.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     diff.new.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     diff.deleted.sort();
@@ -306,5 +343,34 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
             .unwrap();
         assert_eq!(pre, post, "diff must not mutate storage");
+    }
+    #[test]
+    fn test_diff_reports_restamp_for_unchanged_hash_with_drifted_stamp() {
+        let (_g, mut s) = tmp_storage();
+        let h = [7u8; 32];
+        insert_extracted_files(&mut s, &[rust_file("src/a.rs", h)]).unwrap();
+        let mut d = discovered("src/a.rs", h);
+        d.modified_at += 100; // touched, same content
+        let diff = diff_against_index(&s, &[d]).unwrap();
+        assert_eq!(diff.unchanged, vec!["src/a.rs"]);
+        assert_eq!(diff.restamp.len(), 1);
+        assert!(diff.is_empty(), "restamp alone is not re-extraction work");
+        let n = apply_restamps(&mut s, &diff.restamp).unwrap();
+        assert_eq!(n, 1);
+        let stamps = load_file_stamps(&s).unwrap();
+        assert_eq!(stamps["src/a.rs"].modified_at, 1700000100);
+    }
+
+    #[test]
+    fn test_load_file_stamps_omits_malformed_hash_rows() {
+        let (_g, s) = tmp_storage();
+        s.connection()
+            .execute(
+                "INSERT INTO files (path, language, content_hash, size_bytes, modified_at, indexed_at)
+                 VALUES ('bad.rs', 'rust', ?1, 1, 1, 1)",
+                rusqlite::params![&[0u8; 8] as &[u8]],
+            )
+            .unwrap();
+        assert!(load_file_stamps(&s).unwrap().is_empty());
     }
 }

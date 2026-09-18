@@ -56,3 +56,17 @@ jobs:
         # The suite uses --no-lens --no-mcp so cargo is not required for the
         # round-trip itself. Lens build is exercised separately if desired.
         run: bash scripts/test/round_trip.sh
+
+  lens:
+    name: Lens (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: lens
+      - name: cargo test --workspace
+        run: cd lens && cargo test --workspace --quiet
+      - name: release build smoke
+        run: cd lens && cargo build --release --quiet && ./target/release/lens --version

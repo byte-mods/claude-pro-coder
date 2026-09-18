@@ -8,12 +8,9 @@ use lens_core::{
 };
 
 pub fn run(from: &str, to: &str) -> Result<(), u8> {
-    let cwd = match std::env::current_dir() {
+    let cwd = match crate::cmd::util::cwd_project_root("path") {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("lens path: cannot resolve current directory: {e}");
-            return Err(1);
-        }
+        Err(code) => return Err(code),
     };
     run_with_root(&cwd, from, to)
 }
@@ -80,8 +77,12 @@ pub fn run_with_root(root: &Path, from: &str, to: &str) -> Result<(), u8> {
         }
     };
 
+    let touched: Vec<&str> = result
+        .as_ref()
+        .map(|p| p.nodes.iter().map(|n| n.file_path.as_str()).collect())
+        .unwrap_or_default();
     let rendered = render_markdown(from, to, result.as_ref());
-    print!("{rendered}");
+    crate::cmd::util::finish(root, &storage, rendered, &touched);
     Ok(())
 }
 

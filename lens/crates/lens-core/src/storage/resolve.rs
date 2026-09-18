@@ -190,14 +190,19 @@ pub fn resolve_cross_file_references(storage: &mut Storage) -> Result<ResolveSta
         .map_err(|e| LensError::other(format!("resolve imports by qname: {e}")))?
         as u64;
 
+    // Phase 4 — heuristic passes over whatever is still NULL: import → file
+    // mapping per language, `self.`/`this.` receivers, import-aware bare and
+    // dotted names, unique project-wide names. See `resolve_heuristics`.
+    let h = crate::storage::resolve_heuristics::run(&tx)?;
+
     tx.commit()
         .map_err(|e| LensError::other(format!("commit resolve transaction: {e}")))?;
 
     Ok(ResolveStats {
-        resolved_refs,
-        resolved_calls,
-        resolved_types,
-        resolved_imports,
+        resolved_refs: resolved_refs + h.refs,
+        resolved_calls: resolved_calls + h.calls,
+        resolved_types: resolved_types + h.types,
+        resolved_imports: resolved_imports + h.imports_to_file,
     })
 }
 
@@ -474,19 +479,24 @@ mod tests {
     #[test]
     fn test_resolve_bare_name_no_match_leaves_null() {
         let (_g, mut s) = tmp_storage();
-        // File A has `helper`. File B has a ref to bare `helper` but B has
-        // no symbol named `helper`. Bare-name fallback is same-file only,
-        // so the ref must stay NULL (cross-file bare names need imports — T3).
+        // Files A and C both define `helper`. File B has a ref to bare
+        // `helper` with no import evidence. Same-file fallback finds nothing
+        // in B, and the unique-name heuristic is disqualified by the two
+        // candidates, so the ref must stay NULL.
         let a = rust_file(
             "src/a.rs",
             vec![make_symbol("crate::a::helper", "helper", "function")],
         );
+        let c = rust_file(
+            "src/c.rs",
+            vec![make_symbol("crate::c::helper", "helper", "function")],
+        );
         let mut b = rust_file("src/b.rs", vec![make_symbol("crate::b::caller", "caller", "function")]);
         b.refs = vec![make_ref("helper", 1)];
-        insert_extracted_files(&mut s, &[a, b]).expect("insert");
+        insert_extracted_files(&mut s, &[a, c, b]).expect("insert");
 
         let stats = resolve_cross_file_references(&mut s).expect("resolve");
-        assert_eq!(stats.resolved_refs, 0, "bare name in different file must not resolve");
+        assert_eq!(stats.resolved_refs, 0, "ambiguous bare name in different file must not resolve");
 
         let sym_id: Option<i64> = s
             .connection()

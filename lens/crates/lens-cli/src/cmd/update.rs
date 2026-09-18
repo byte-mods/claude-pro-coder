@@ -29,10 +29,10 @@
 use std::path::{Path, PathBuf};
 
 use lens_core::storage::{
-    diff_against_index, resolve_cross_file_references, update_files, FileDiff, ResolveStats,
-    Storage, UpdateStats,
+    apply_restamps, diff_against_index, load_file_stamps, resolve_cross_file_references,
+    update_files, FileDiff, ResolveStats, Storage, UpdateStats,
 };
-use lens_core::{discover, run_pipeline_on_discovered, Registry};
+use lens_core::{discover_with_stamps, run_pipeline_on_discovered, sync_docs, DocsStats, Registry};
 
 /// Run `lens update` against `path` (defaults to current working directory).
 ///
@@ -81,7 +81,15 @@ pub fn run(path: Option<&Path>) -> Result<(), u8> {
 
     let registry = Registry::with_default_languages();
 
-    let discovered = match discover(&project_root, &registry) {
+    // Stat fast path: unchanged (size, mtime) rows are not re-read.
+    let stamps = match load_file_stamps(&storage) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("lens update: cannot load file stamps: {e}");
+            return Err(1);
+        }
+    };
+    let discovered = match discover_with_stamps(&project_root, &registry, &stamps) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("lens update: discovery failed: {e}");
@@ -96,12 +104,29 @@ pub fn run(path: Option<&Path>) -> Result<(), u8> {
             return Err(1);
         }
     };
+    if let Err(e) = apply_restamps(&mut storage, &diff.restamp) {
+        eprintln!("lens update: restamp failed: {e}");
+        return Err(1);
+    }
+
+    // The text index is synced on every update, even when the code index
+    // has nothing to do — a README or a config file may have changed.
+    let docs_stats = match sync_docs(&mut storage, &project_root, &registry) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("lens update: text index failed: {e}");
+            return Err(1);
+        }
+    };
 
     if diff.is_empty() {
         println!(
-            "lens update: no changes detected ({} unchanged file{}, nothing to do).",
+            "lens update: no code changes detected ({} unchanged file{}); text index {} added / {} replaced / {} deleted.",
             diff.unchanged.len(),
-            if diff.unchanged.len() == 1 { "" } else { "s" }
+            if diff.unchanged.len() == 1 { "" } else { "s" },
+            docs_stats.added,
+            docs_stats.replaced,
+            docs_stats.deleted,
         );
         return Ok(());
     }
@@ -141,7 +166,7 @@ pub fn run(path: Option<&Path>) -> Result<(), u8> {
         }
     };
 
-    print_summary(&db_path, &diff, &update_stats, &resolve_stats);
+    print_summary(&db_path, &diff, &update_stats, &resolve_stats, &docs_stats);
     Ok(())
 }
 
@@ -150,6 +175,7 @@ fn print_summary(
     diff: &FileDiff,
     upd: &UpdateStats,
     res: &ResolveStats,
+    docs: &DocsStats,
 ) {
     println!(
         "lens update: {} changed / {} new / {} deleted / {} unchanged → {}",
@@ -166,6 +192,10 @@ fn print_summary(
     println!(
         "lens update: re-resolved {} refs / {} calls / {} types / {} imports across files",
         res.resolved_refs, res.resolved_calls, res.resolved_types, res.resolved_imports,
+    );
+    println!(
+        "lens update: text index {} added / {} replaced / {} deleted / {} unchanged",
+        docs.added, docs.replaced, docs.deleted, docs.unchanged,
     );
 }
 

@@ -8,6 +8,104 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-18
+
+Lens becomes an IDE-grade index and a cross-session memory for any MCP
+client, and the pro-coder protocol moves to v7 with token discipline and a
+one-shot build mode. The vendored lens crate is at local version 0.2.0
+(`lens/VENDOR.txt`, local patch set 2).
+
+### Added
+- **`lens search <words>`** — keyword search over *every* text file in
+  the project: any language (including ones without a symbol extractor),
+  markdown, config, shell, and the agent's own notes under
+  `.claude/state/` (always indexed, even when gitignored). Backed by a
+  new SQLite FTS5 table (`docs` / `docs_fts`, schema v3), BM25-ranked per
+  file, prefix-matched per word, budget-capped, and each hit is annotated
+  with the enclosing symbol. This is the capped, ranked replacement for a
+  tree-wide `Grep`, and what makes lens usable as a memory for a model.
+- **`lens deps <file>`** — file-level connections: imports in both
+  directions (resolved to project files where possible), call edges
+  aggregated per counterpart file, and the file's most-called symbols.
+  The cheapest way to size a blast radius without reading the file.
+- **Code-aware token estimator** (`lens_core::tokens`). Budgets for
+  `follow` and `slice` are now fitted by estimated tokens (identifier
+  sub-words, operator merging, indentation, newlines) instead of a flat
+  4-chars-per-token rule that under-counted dense code by 20–40%.
+  Calibrated at ~3.2 chars/token across Rust, Python, TypeScript, shell
+  and Markdown.
+- **Tokens footer on every read verb** — `_tokens: ~N emitted • ~M saved
+  vs reading K files whole_`. The meter (`lens meter`) now records
+  `lens_calls`, `lens_emitted_tokens`, `lens_saved_tokens` automatically
+  and prints the leverage ratio; `--json` carries the new keys.
+  Opt out with `LENS_NO_METER=1`.
+- **Import-aware call/reference resolution** (`storage::resolve_heuristics`).
+  Cross-file calls written the way real code writes them — Python
+  `from pkg.mod import f; f()` and `import pkg.mod as m; m.f()`
+  (absolute and relative), Rust `use crate::a::b; b()` (crate roots
+  detected in workspaces), TypeScript/JavaScript `import { f } from
+  "./mod"` (extension and `index.*` resolution), Go package imports
+  `store.Open()`, and `self.` / `this.` receivers — now link to their
+  definitions. A bare name defined exactly once in the project also
+  resolves; dotted names never fall through to that rule, so
+  `list.append` cannot bind to an unrelated project `append`. On this
+  repository the number of resolved call edges went from same-file-only
+  to 2 833 of 10 319, which is what `lens refs`, `lens follow`'s caller
+  list, `lens map`'s hot-spot ranking and `lens query`'s traversal see.
+- **`lens map --budget N`** — depth is reduced automatically until the
+  rendering fits, with a note saying how far it folded.
+- **MCP server hardening** — every `tools/call` now runs the same
+  throttled auto-freshness check as the CLI (v1 served stale results
+  from a long-lived server), a missing index is built automatically on
+  first use, the in-memory graph is cached per root and invalidated by
+  an index stamp, every tool accepts a `root` argument so one server can
+  serve several projects (`lens mcp --root` sets the default), `ping` is
+  answered, and `lens_search` / `lens_deps` join the catalogue (nine
+  tools). Works unchanged with Codex, Cursor, or any MCP client — see the
+  README section *Using lens from other agents*.
+- **Project-root discovery** — read verbs work from any sub-directory
+  (walk up to `.lens/index.db`, else `.git`).
+- **pro-coder protocol v7** (`pro-coder/SKILL.md`): a *Token discipline*
+  block in P1 (default budgets, narrow before raising, no whole-file
+  `Read` of a sliced file, `lens search` instead of tree-wide `Grep`,
+  `lens meter --diff` reported at every section close in a new
+  **Tokens** line of the user-facing summary); `lens search` / `lens
+  deps` in the tooling table with a "recall prior-session notes" row;
+  a new **One-shot build mode** section (objective contract with
+  verifiable acceptance checks in `current-tasks.md`, all sections
+  planned up front, continuous section boundaries re-anchored from
+  disk, done only when the end-to-end verification task passes
+  super-qa); hard rules 19–20, three checklist lines and drift anchor 10.
+- **Tests:** lens core 452 → 506, lens CLI unit 91 → 118 plus 40
+  end-to-end (666 total, all green); `skill_meta.sh` 27 → 36 checks
+  including a regression guard that fails if `SKILL.md`, `README.md` or
+  `scripts/install.sh` reintroduce fallback-mode language; CI gains a
+  `cargo test --workspace` job.
+
+### Changed
+- **`lens index` is idempotent** — re-running replaces the index in one
+  transaction instead of failing on the `files.path` UNIQUE constraint.
+- **Freshness checks cost one `stat` per file** — unchanged files
+  (matching size + mtime) are not re-read or re-hashed; drifted stamps
+  are refreshed in place. On this repository a no-change `lens update`
+  takes ~40 ms.
+- `lens follow` / `lens refs` resolve symbols with indexed SQL lookups
+  instead of loading the whole graph.
+- `lens query`'s per-node token weight corrected from 80 to 24 (a
+  rendered node line is ~24 tokens), so a 2000-token budget now returns
+  the neighbourhood it promised.
+- `lens init` default config lists `csharp`.
+- README rewritten for the new surface; clone URLs point at
+  `byte-mods/claude-pro-coder`; CHANGELOG link footers restored for
+  0.2.4 → 0.4.0.
+
+### Fixed
+- README line describing an empty index still claimed the skill "falls
+  back to Read/Grep/Glob at runtime" (retired in v6). Now guarded by a
+  test.
+- `examples/README.md` and `CONTRIBUTING.md` still described the v5
+  fallback mode.
+
 ## [0.3.0] - 2026-05-17
 
 ### BREAKING
@@ -356,9 +454,14 @@ Initial public release.
 - `--dry-run` on `install.sh` skips the cargo build entirely rather
   than running it in a no-write mode (cargo offers no such mode).
 
-[Unreleased]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.3...HEAD
-[0.2.3]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.2...v0.2.3
-[0.2.2]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/sudeep-dasgupta/claude-skill/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/sudeep-dasgupta/claude-skill/releases/tag/v0.1.0
+[Unreleased]: https://github.com/byte-mods/claude-pro-coder/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/byte-mods/claude-pro-coder/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.6...v0.3.0
+[0.2.6]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.5...v0.2.6
+[0.2.5]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/byte-mods/claude-pro-coder/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/byte-mods/claude-pro-coder/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/byte-mods/claude-pro-coder/releases/tag/v0.1.0

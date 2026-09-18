@@ -27,12 +27,9 @@ pub fn run(
     record_input: Option<u64>,
     record_output: Option<u64>,
 ) -> Result<(), u8> {
-    let cwd = match std::env::current_dir() {
+    let cwd = match crate::cmd::util::cwd_project_root("meter") {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("lens meter: cannot resolve current directory: {e}");
-            return Err(1);
-        }
+        Err(code) => return Err(code),
     };
     run_with_root(&cwd, json, since, reset_flag, diff, record_input, record_output)
 }
@@ -160,6 +157,16 @@ pub fn render_human(state: &MeterState, mode: ReportMode) -> String {
     let _ = writeln!(&mut out, "- input_tokens:  {}", counters.input_tokens);
     let _ = writeln!(&mut out, "- output_tokens: {}", counters.output_tokens);
     let _ = writeln!(&mut out, "- calls:         {}", counters.calls);
+    let _ = writeln!(&mut out);
+    let _ = writeln!(&mut out, "**Lens read verbs** (recorded automatically)");
+    let _ = writeln!(&mut out);
+    let _ = writeln!(&mut out, "- lens_calls:           {}", counters.lens_calls);
+    let _ = writeln!(&mut out, "- lens_emitted_tokens:  {}", counters.lens_emitted_tokens);
+    let _ = writeln!(&mut out, "- lens_saved_tokens:    {}  (vs reading touched files whole)", counters.lens_saved_tokens);
+    if counters.lens_emitted_tokens > 0 {
+        let ratio = (counters.lens_emitted_tokens + counters.lens_saved_tokens) as f64 / counters.lens_emitted_tokens as f64;
+        let _ = writeln!(&mut out, "- leverage:             {ratio:.1}× (whole-file tokens ÷ lens tokens)");
+    }
     if state.last_updated_unix > 0 {
         let _ = writeln!(
             &mut out,
@@ -175,10 +182,13 @@ pub fn render_human(state: &MeterState, mode: ReportMode) -> String {
 pub fn to_json(state: &MeterState, diff_mode: bool) -> String {
     let counters = if diff_mode { state.diff() } else { state.current };
     format!(
-        "{{\"input_tokens\":{},\"output_tokens\":{},\"calls\":{},\"last_updated_unix\":{},\"last_invoked_unix\":{},\"diff_mode\":{}}}",
+        "{{\"input_tokens\":{},\"output_tokens\":{},\"calls\":{},\"lens_calls\":{},\"lens_emitted_tokens\":{},\"lens_saved_tokens\":{},\"last_updated_unix\":{},\"last_invoked_unix\":{},\"diff_mode\":{}}}",
         counters.input_tokens,
         counters.output_tokens,
         counters.calls,
+        counters.lens_calls,
+        counters.lens_emitted_tokens,
+        counters.lens_saved_tokens,
         state.last_updated_unix,
         state.last_invoked_unix,
         if diff_mode { "true" } else { "false" }
@@ -274,14 +284,14 @@ mod tests {
         // *next* diff is zero. We assert the immediately-prior diff via API.
         // What we can verify: state.current = 1000/500, and after the JSON read
         // it advanced last_invoked.
-        assert_eq!(state.current, MeterCounters { input_tokens: 1000, output_tokens: 500, calls: 1 });
+        assert_eq!(state.current, MeterCounters { input_tokens: 1000, output_tokens: 500, calls: 1, ..Default::default() });
         assert_eq!(diff, MeterCounters::default(), "after the diff read, last_invoked == current");
     }
 
     #[test]
     fn test_render_human_includes_label_per_mode() {
         let mut state = MeterState::default();
-        state.current = MeterCounters { input_tokens: 10, output_tokens: 5, calls: 1 };
+        state.current = MeterCounters { input_tokens: 10, output_tokens: 5, calls: 1, ..Default::default() };
         let cum = render_human(&state, ReportMode::Cumulative);
         let dif = render_human(&state, ReportMode::Diff);
         assert!(cum.contains("**Cumulative**"));
@@ -291,8 +301,10 @@ mod tests {
     #[test]
     fn test_to_json_emits_flat_object_with_known_keys() {
         let mut state = MeterState::default();
-        state.current = MeterCounters { input_tokens: 10, output_tokens: 5, calls: 1 };
+        state.current = MeterCounters { input_tokens: 10, output_tokens: 5, calls: 1, lens_calls: 2, lens_emitted_tokens: 300, lens_saved_tokens: 4000 };
         let j = to_json(&state, false);
+        assert!(j.contains("\"lens_calls\":2"));
+        assert!(j.contains("\"lens_saved_tokens\":4000"));
         assert!(j.starts_with('{') && j.ends_with('}'));
         assert!(j.contains("\"input_tokens\":10"));
         assert!(j.contains("\"output_tokens\":5"));
@@ -303,8 +315,8 @@ mod tests {
     #[test]
     fn test_to_json_diff_mode_serialises_delta_not_current() {
         let mut state = MeterState::default();
-        state.current = MeterCounters { input_tokens: 100, output_tokens: 50, calls: 5 };
-        state.last_invoked = MeterCounters { input_tokens: 30, output_tokens: 10, calls: 2 };
+        state.current = MeterCounters { input_tokens: 100, output_tokens: 50, calls: 5, ..Default::default() };
+        state.last_invoked = MeterCounters { input_tokens: 30, output_tokens: 10, calls: 2, ..Default::default() };
         let j = to_json(&state, true);
         assert!(j.contains("\"input_tokens\":70"));
         assert!(j.contains("\"output_tokens\":40"));

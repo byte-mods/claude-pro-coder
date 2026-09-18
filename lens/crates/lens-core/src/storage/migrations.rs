@@ -22,6 +22,34 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: "ALTER TABLE symbols ADD COLUMN doc_comment TEXT;",
     },
+    Migration {
+        // v3: any-language text index. `docs` holds one row per text file in
+        // the project (code files included, plus markdown/config/scripts and
+        // the agent's own state notes under `.claude/state/`), with a
+        // content hash for incremental sync and a per-file token estimate so
+        // read verbs can report "tokens saved vs reading the whole file".
+        // `docs_fts` is the FTS5 full-text companion keyed by `docs.id`
+        // (rowid) that powers `lens search`. `unicode61` with `_` as a token
+        // character keeps snake_case identifiers whole.
+        version: 3,
+        sql: "CREATE TABLE docs (
+                  id INTEGER PRIMARY KEY,
+                  path TEXT NOT NULL UNIQUE,
+                  kind TEXT NOT NULL,
+                  content_hash BLOB NOT NULL,
+                  size_bytes INTEGER NOT NULL,
+                  modified_at INTEGER NOT NULL,
+                  indexed_at INTEGER NOT NULL,
+                  token_estimate INTEGER NOT NULL,
+                  line_count INTEGER NOT NULL
+              ) STRICT;
+              CREATE INDEX idx_docs_kind ON docs(kind);
+              CREATE VIRTUAL TABLE docs_fts USING fts5(
+                  path UNINDEXED,
+                  body,
+                  tokenize = \"unicode61 tokenchars '_'\"
+              );",
+    },
 ];
 
 pub fn current_schema_version(conn: &Connection) -> Result<u32> {
@@ -102,7 +130,7 @@ mod tests {
     fn test_schema_v1_creates_all_tables() {
         let conn = open_in_memory();
         apply_migrations(&conn).expect("apply v1");
-        for table in ["meta", "files", "symbols", "refs", "calls", "imports", "types"] {
+        for table in ["meta", "files", "symbols", "refs", "calls", "imports", "types", "docs", "docs_fts"] {
             let count: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",

@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use lens_core::storage::{
-    insert_extracted_files, resolve_cross_file_references, InsertStats, ResolveStats, Storage,
+    rebuild_extracted_files, resolve_cross_file_references, InsertStats, ResolveStats, Storage,
 };
-use lens_core::{run_pipeline, Registry};
+use lens_core::{run_pipeline, sync_docs, DocsStats, Registry};
 
 /// Build (or rebuild) the lens index for `path` (defaults to the current
 /// working directory). Writes to `.lens/index.db` under the project root.
@@ -12,9 +12,11 @@ use lens_core::{run_pipeline, Registry};
 ///   1. resolve project root
 ///   2. ensure `.lens/` exists, open `.lens/index.db` (creates + migrates)
 ///   3. discover + parse + extract via [`run_pipeline`]
-///   4. bulk-insert into storage ([`insert_extracted_files`])
+///   4. atomic rebuild of the code index ([`rebuild_extracted_files`]) —
+///      idempotent: re-running replaces the previous index in one transaction
 ///   5. cross-file FK resolution ([`resolve_cross_file_references`])
-///   6. print summary
+///   6. any-language text index sync ([`sync_docs`]) for `lens search`
+///   7. print summary
 pub fn run(path: Option<&Path>) -> Result<(), u8> {
     let project_root: PathBuf = match path {
         Some(p) => p.to_path_buf(),
@@ -59,7 +61,7 @@ pub fn run(path: Option<&Path>) -> Result<(), u8> {
         }
     };
 
-    let insert_stats = match insert_extracted_files(&mut storage, &files) {
+    let insert_stats = match rebuild_extracted_files(&mut storage, &files) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("lens index: insert failed: {e}");
@@ -75,11 +77,19 @@ pub fn run(path: Option<&Path>) -> Result<(), u8> {
         }
     };
 
-    print_summary(&db_path, &insert_stats, &resolve_stats);
+    let docs_stats = match sync_docs(&mut storage, &project_root, &registry) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("lens index: text index failed: {e}");
+            return Err(1);
+        }
+    };
+
+    print_summary(&db_path, &insert_stats, &resolve_stats, &docs_stats);
     Ok(())
 }
 
-fn print_summary(db_path: &Path, ins: &InsertStats, res: &ResolveStats) {
+fn print_summary(db_path: &Path, ins: &InsertStats, res: &ResolveStats, docs: &DocsStats) {
     println!(
         "lens index: wrote {} files / {} symbols / {} refs / {} calls / {} imports / {} type-rels to {}",
         ins.files,
@@ -93,6 +103,11 @@ fn print_summary(db_path: &Path, ins: &InsertStats, res: &ResolveStats) {
     println!(
         "lens index: resolved {} refs / {} calls / {} types / {} imports across files",
         res.resolved_refs, res.resolved_calls, res.resolved_types, res.resolved_imports,
+    );
+    println!(
+        "lens index: text index {} files ({} skipped as binary/oversized) — `lens search` ready",
+        docs.total_indexed(),
+        docs.skipped,
     );
 }
 
@@ -178,22 +193,18 @@ mod tests {
             "expected exactly one resolved import (use util::helper)"
         );
 
-        // The cross-file call (main.rs calls helper) should also be resolved
-        // by bare-name fallback fails (different file), but qname won't match
-        // either since the call node's callee_raw_name is just "helper" (bare).
-        // So callee_symbol_id stays NULL — that's correct behavior, imports
-        // carry the cross-file link.
-        let unresolved_calls: i64 = conn
+        // The cross-file call (main.rs calls bare `helper`) is linked through
+        // the import-aware heuristic phase: `use util::helper` resolved to
+        // the helper symbol, and the bare callee name matches it.
+        let resolved_calls: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM calls WHERE callee_symbol_id IS NULL",
+                "SELECT COUNT(*) FROM calls c JOIN symbols s ON s.id = c.callee_symbol_id
+                 WHERE s.qualified_name = 'util::helper'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert!(
-            unresolved_calls >= 1,
-            "bare-name cross-file call must stay NULL — imports do the linking"
-        );
+        assert_eq!(resolved_calls, 1, "bare-name cross-file call must resolve via the import");
     }
 
     #[test]
@@ -215,23 +226,38 @@ mod tests {
     }
 
     #[test]
-    fn test_index_run_idempotent_second_run_re_inserts() {
-        // The current insert layer doesn't dedupe by content_hash — re-running
-        // appends new rows (UNIQUE constraint on files.path causes duplicate
-        // path inserts to fail). Two consecutive runs on the same project
-        // must yield a clear error rather than silent corruption. This test
-        // pins the contract: the second run errors out due to UNIQUE
-        // constraint on files.path.
+    fn test_index_run_is_idempotent_and_replaces_previous_index() {
+        // Re-running `lens index` must replace the index atomically rather
+        // than fail on the `files.path` UNIQUE constraint (the v1 contract).
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         write(&root.join("src/a.rs"), "pub fn a() {}\n");
 
         run(Some(root)).expect("first index run");
-        let res = run(Some(root));
-        assert!(
-            res.is_err(),
-            "second run should fail on UNIQUE files.path until incremental update lands"
-        );
+        write(&root.join("src/a.rs"), "pub fn a_renamed() {}\n");
+        run(Some(root)).expect("second index run must succeed");
+
+        let db = root.join(".lens").join("index.db");
+        let storage = Storage::open(&db).expect("re-open");
+        let files: i64 = storage
+            .connection()
+            .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(files, 1, "no duplicate file rows after a rebuild");
+        let names: Vec<String> = storage
+            .connection()
+            .prepare("SELECT name FROM symbols")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(names, vec!["a_renamed"]);
+        let docs: i64 = storage
+            .connection()
+            .query_row("SELECT COUNT(*) FROM docs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(docs, 1, "text index populated by lens index");
     }
 
     #[test]

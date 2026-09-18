@@ -168,6 +168,39 @@ else
 ${placeholders}"
 fi
 
+# --- 6. v6+ contract: no retired fallback-mode language ------------------
+
+echo "[6] no fallback-mode language in the lens-required triad"
+
+# SKILL.md, README.md and scripts/install.sh are bound by a three-way contract:
+# lens is required, there is no Read/Grep/Glob fallback mode. Any sentence
+# that reintroduces the retired v5 behaviour in the present tense is a
+# regression. Historical mentions must be past-tense and explicitly labelled
+# as retired ("v5 had", "v6 removed", "retired fallback") — those are allowed.
+for f in "${skill}" "${repo_root}/README.md" "${repo_root}/scripts/install.sh"; do
+  name="$(basename "${f}")"
+  offending="$(grep -niE 'falls? back to (Read|Grep|Glob)|fallback mode|drops? to fallback|uses? fallback' "${f}" \
+    | grep -viE 'v5|removed|retired|no fallback|not "fallback|not fallback' || true)"
+  if [[ -z "${offending}" ]]; then
+    pass "no_fallback_language: ${name}"
+  else
+    fail "no_fallback_language: ${name} — found:
+${offending}"
+  fi
+done
+
+# --- 7. v7 protocol surface: lens verbs and modes referenced --------------
+
+echo "[7] v7 protocol surface"
+
+for needle in 'lens search' 'lens deps' 'lens meter --diff' '## One-shot build mode' 'Token discipline' '_tokens: ~'; do
+  if grep -qF -- "${needle}" "${skill}"; then
+    pass "skill_mentions: ${needle}"
+  else
+    fail "skill_mentions: ${needle}"
+  fi
+done
+
 # --- Summary -------------------------------------------------------------
 
 echo

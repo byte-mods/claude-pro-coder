@@ -1,5 +1,7 @@
 //! lens-core — symbol-aware code index.
 
+pub mod deps;
+pub mod docs;
 pub mod error;
 pub mod explain;
 pub mod extract;
@@ -15,6 +17,7 @@ pub mod path;
 pub mod query;
 pub mod slice;
 pub mod storage;
+pub mod tokens;
 pub mod walk;
 pub mod watch;
 
@@ -31,22 +34,28 @@ pub use freshness::{ensure_fresh, Config as FreshnessConfig, FreshnessOutcome};
 pub use map::{build_map, render_tree as render_map, MapNode, MapResult, MapSymbol, TOP_SYMBOLS_PER_NODE};
 pub use meter::{
     meter_path, parse_state as parse_meter_state, read_state as read_meter,
-    record as record_meter, render_state as render_meter_state, reset as reset_meter,
+    record as record_meter, record_lens, record_lens_on_disk, render_state as render_meter_state, reset as reset_meter,
     snapshot_invocation as snapshot_meter, write_state as write_meter, MeterCounters, MeterState,
 };
 pub use refs::{list_refs, RefSite, RefsResult, HARD_LIMIT as REFS_HARD_LIMIT};
 pub use slice::{slice_at, SliceResult, MAX_IMPORTS};
 pub use parse::{parse, ParsedFile};
-pub use path::{resolve_symbol_to_id, shortest_path, PathResult};
+pub use path::{resolve_symbol_candidates, resolve_symbol_to_id, shortest_path, PathResult, SymbolCandidate};
+pub use deps::{file_deps, CallEdge, FileDeps, ImportEdge};
 pub use query::{
     query_graph, seed_nodes_from_question, EdgeKind, Graph, QueryEdge, QueryNode, QueryResult,
     SymbolMeta, TraversalMode,
+};
+pub use tokens::{estimate_tokens, fit_lines};
+pub use docs::{
+    file_token_estimate, search_docs, sync_docs, total_file_tokens, DocsStats, SearchFile, SearchHit,
+    SearchOptions, SearchResult,
 };
 pub use storage::{
     diff_against_index, insert_extracted_files, resolve_cross_file_references, update_files,
     FileDiff, InsertStats, ResolveStats, Storage, UpdateStats,
 };
-pub use walk::{discover, DiscoveredFile};
+pub use walk::{discover, discover_with_stamps, DiscoveredFile, FileStamp};
 pub use watch::{run_watch, WatchConfig};
 
 pub fn version() -> &'static str {

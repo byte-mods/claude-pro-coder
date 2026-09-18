@@ -1,9 +1,22 @@
 VENDOR_SHA=a29f523
-LOCAL_PATCHES=1
+LOCAL_PATCHES=2
 # claude-skill v0.2.4 — local fix in crates/lens-core/src/lang/rust.rs
 #   Bug 1: drop type-relations whose owner type is not declared in the
 #          same file (e.g. `impl Trait for ImportedType`).
 #   Bug 2: scope methods inside `impl <Trait> for <Type>` under
 #          `Type::Trait::method` so distinct trait impls of the same
 #          method on the same type produce distinct qnames.
+# claude-pro-coder v0.4.0 — local patch set 2 (lens crate version 0.2.0):
+#   - tokens.rs: code-aware token estimator; follow/slice fit bodies by
+#     estimated tokens; every read verb ends with a tokens footer.
+#   - docs.rs + schema v3: any-language text index (docs / docs_fts FTS5)
+#     behind `lens search`; per-file token estimates for the meter.
+#   - storage/resolve_heuristics.rs: import-aware, self./this., module-path,
+#     relative-path and unique-name call/ref resolution.
+#   - walk + diff: stat (size+mtime) fast path; `lens index` idempotent.
+#   - deps.rs + `lens deps`: file-level import/call connections.
+#   - meter: lens_emitted / lens_saved / lens_calls auto-recorded.
+#   - mcp.rs: per-call freshness, graph cache, `root` arg, auto-bootstrap,
+#     ping, lens_search, lens_deps; `lens map --budget`; project-root
+#     discovery from sub-directories.
 # Re-vendor a fresh upstream SHA once these land in lens upstream.

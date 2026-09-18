@@ -14,12 +14,9 @@ use lens_core::{run_watch, WatchConfig};
 /// `debounce_ms` is the debounce window; events arriving within this
 /// interval are coalesced into one update pass.
 pub fn run(debounce_ms: u64) -> Result<(), u8> {
-    let cwd = match std::env::current_dir() {
+    let cwd = match crate::cmd::util::cwd_project_root("watch") {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("lens watch: cannot resolve current directory: {e}");
-            return Err(1);
-        }
+        Err(code) => return Err(code),
     };
     run_with_root(&cwd, debounce_ms, None)
 }
