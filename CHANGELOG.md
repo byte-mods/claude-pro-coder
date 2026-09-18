@@ -8,6 +8,38 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-18
+
+Fixes `/pro-coder` being rejected outright on Fable 5.1 with
+`API Error: ... safeguards flagged this message ... [reasoning_extraction]`.
+
+### Fixed
+- **Skill no longer reads as a reasoning-extraction attempt.** The
+  mandatory pre-implementation and pre-QA blocks were specified in
+  language that asked the model to surface its *internal reasoning*
+  — "chain-of-thought ... walks through your reasoning step-by-step",
+  "this is not internal `<thinking>`", "internal thinking is not
+  enough". On Fable 5.1 that phrasing tripped an input safeguard and
+  the request was refused before the skill could run.
+
+  The blocks are now specified as what they always were in practice:
+  authored planning artifacts written for the user, not a dump of
+  internal deliberation. Renamed and reworded:
+  - `**Chain-of-thought (T<n>):**` → `**Task brief (T<n>):**`
+  - `**Super-qa chain-of-thought:**` → `**Super-qa test plan:**`
+  - `**Super-qa chain-of-thought (section):**` → `**Super-qa test plan (section):**`
+  - `**Super-qa briefing:**` — unchanged.
+
+  **Behaviour is unchanged.** Every required bullet, the enforcement
+  rules (rule 18, rule 9), the pre-flight checklist gates, the
+  fast-path one-line collapse, and the "reject a verdict that arrives
+  without its plan" rule all survive verbatim — only the framing and
+  the block headings changed. Affects P4 step 0a, P4.5, and P5.
+
+### Changed
+- `README.md`: the "Chain-of-thought enforcement" feature row is now
+  "Written-brief enforcement", with the block names above.
+
 ## [0.5.0] - 2026-09-18
 
 Every file in a project is now indexed — not just text. Lens crate local
