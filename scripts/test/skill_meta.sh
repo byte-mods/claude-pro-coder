@@ -21,6 +21,18 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 skill="${repo_root}/pro-coder/SKILL.md"
+skill_dir="${repo_root}/pro-coder"
+
+# v8 split the skill into a core SKILL.md plus on-demand references/. Checks that
+# are about *content existing anywhere in the protocol* scan the whole bundle;
+# checks that are about the core file staying small and navigable scan only
+# SKILL.md. Keeping the distinction explicit is the point — the regression this
+# guards against is detail creeping back into the core until the middle sags
+# again, which is exactly how the lens mandate stopped being followed.
+bundle=("${skill}")
+for _ref in "${skill_dir}"/references/*.md; do
+  [[ -f "${_ref}" ]] && bundle+=( "${_ref}" )
+done
 
 failures=0
 total=0
@@ -130,7 +142,7 @@ unknown_refs="$(awk '
       $0 = substr($0, RSTART + RLENGTH)
     }
   }
-' "${skill}" | sort -u | awk '
+' "${bundle[@]}" | sort -u | awk '
   BEGIN {
     valid["P1"]=1; valid["P2"]=1; valid["P3"]=1; valid["P4"]=1;
     valid["P4.5"]=1; valid["P5"]=1; valid["P6"]=1;
@@ -148,19 +160,22 @@ fi
 
 echo "[4] code-fence balance"
 
-fence_count="$(grep -cE '^```' "${skill}" || true)"
-if (( fence_count % 2 == 0 )); then
-  pass "code_fences_balanced (count=${fence_count})"
-else
-  fail "code_fences_balanced — odd count: ${fence_count}"
-fi
+for f in "${bundle[@]}"; do
+  name="$(basename "${f}")"
+  fence_count="$(grep -cE '^```' "${f}" || true)"
+  if (( fence_count % 2 == 0 )); then
+    pass "code_fences_balanced: ${name} (count=${fence_count})"
+  else
+    fail "code_fences_balanced: ${name} — odd count: ${fence_count}"
+  fi
+done
 
 # --- 5. No placeholder leaks ---------------------------------------------
 
 echo "[5] no placeholder markers"
 
 # These should never ship in a "feature-complete" SKILL.md. Whitelist nothing.
-placeholders="$(grep -nE '\<(TODO|FIXME|TBD|XXX)\>' "${skill}" | grep -vE '<(TODO|FIXME|TBD|XXX)>' || true)"
+placeholders="$(grep -nE '\<(TODO|FIXME|TBD|XXX)\>' "${bundle[@]}" | grep -vE '<(TODO|FIXME|TBD|XXX)>' || true)"
 if [[ -z "${placeholders}" ]]; then
   pass no_placeholder_markers
 else
@@ -198,6 +213,74 @@ for needle in 'lens search' 'lens deps' 'lens describe' 'lens meter --diff' '## 
     pass "skill_mentions: ${needle}"
   else
     fail "skill_mentions: ${needle}"
+  fi
+done
+
+# --- 8. v8 structure: split core, bootstrap script, enforcement hook ------
+#
+# Every check here guards one half of the v8 fix. The skill used to be a single
+# 844-line / 76KB file in which the lens mandate sat in the sagging middle with
+# nothing enforcing it; the agent followed the phase headings and silently
+# skipped lens. Detail creeping back into SKILL.md, a references file drifting
+# out of the index, or the hook/bootstrap going missing would each restore that
+# failure mode without any other test noticing.
+
+echo "[8] v8 structure"
+
+core_line_budget=400
+core_lines="$(wc -l < "${skill}" | tr -d ' ')"
+if (( core_lines <= core_line_budget )); then
+  pass "core_within_line_budget (${core_lines} <= ${core_line_budget})"
+else
+  fail "core_within_line_budget — SKILL.md is ${core_lines} lines, budget ${core_line_budget}. Move detail into references/."
+fi
+
+# The bootstrap script and the guard hook are the two mechanisms. Both must
+# exist and both must parse — a hook with a syntax error fails open silently,
+# which looks exactly like no hook at all.
+for helper in "scripts/bootstrap.sh" "hooks/lens_guard.sh"; do
+  if [[ -f "${skill_dir}/${helper}" ]]; then
+    pass "helper_present: ${helper}"
+    if bash -n "${skill_dir}/${helper}" 2>/dev/null; then
+      pass "helper_parses: ${helper}"
+    else
+      fail "helper_parses: ${helper} — bash -n failed"
+    fi
+  else
+    fail "helper_present: ${helper}"
+    fail "helper_parses: ${helper} — file missing"
+  fi
+done
+
+# The reference index in SKILL.md and the files on disk must agree in both
+# directions: a pointer to a missing file sends the agent nowhere, and a file no
+# pointer mentions is a file that never gets loaded.
+for ref in "${skill_dir}"/references/*.md; do
+  [[ -f "${ref}" ]] || continue
+  rname="$(basename "${ref}")"
+  if grep -qF "references/${rname}" "${skill}"; then
+    pass "reference_indexed: ${rname}"
+  else
+    fail "reference_indexed: ${rname} — no pointer to it in SKILL.md"
+  fi
+done
+
+for pointer in $(grep -oE 'references/[a-z-]+\.md' "${skill}" | sort -u); do
+  if [[ -f "${skill_dir}/${pointer}" ]]; then
+    pass "reference_resolves: ${pointer}"
+  else
+    fail "reference_resolves: ${pointer} — SKILL.md points at a file that does not exist"
+  fi
+done
+
+# The two instructions that make lens as cheap as Grep. Without the ToolSearch
+# line the MCP verbs stay unloaded and unusable; without the bootstrap line the
+# five-step bootstrap goes back to being half-performed.
+for needle in 'scripts/bootstrap.sh' 'ToolSearch' 'mcp__lens__lens_query' 'lens_guard.sh' 'PRO_CODER_GUARD'; do
+  if grep -qF -- "${needle}" "${skill}"; then
+    pass "core_mentions: ${needle}"
+  else
+    fail "core_mentions: ${needle}"
   fi
 done
 

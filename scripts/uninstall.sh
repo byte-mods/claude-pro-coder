@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Uninstall the shipped skills (pro-coder, diagram) from ~/.claude/skills/.
 # Also removes the bundled `lens` binary at ~/.claude/bin/lens (and its
-# install marker) and the `mcpServers.lens` entry from ~/.claude.json by
-# default. Pass --keep-lens to leave the binary in place; --keep-mcp to leave
-# the claude.json entry.
+# install marker), the `mcpServers.lens` entry from ~/.claude.json, and the
+# lens-first PreToolUse guard from ~/.claude/settings.json by default. Pass
+# --keep-lens to leave the binary in place; --keep-mcp to leave the claude.json
+# entry; --keep-hooks to leave the guard registered.
 #
 # Usage:
 #   scripts/uninstall.sh                  # remove skill + lens binary + MCP entry
@@ -12,6 +13,8 @@
 #   scripts/uninstall.sh --claude-json P  # custom claude.json (default: ~/.claude.json)
 #   scripts/uninstall.sh --keep-lens      # leave the lens binary installed
 #   scripts/uninstall.sh --keep-mcp       # leave mcpServers.lens in claude.json
+#   scripts/uninstall.sh --keep-hooks     # leave the lens-first guard in settings.json
+#   scripts/uninstall.sh --settings P     # custom settings.json (default: ~/.claude/settings.json)
 #   scripts/uninstall.sh --dry-run        # print what would be removed, don't remove
 #   scripts/uninstall.sh --quiet          # suppress non-error output
 #   scripts/uninstall.sh --strict         # extra paranoia — refuse paths outside ~/.claude/
@@ -38,6 +41,8 @@ lens_bin_dir="${HOME}/.claude/bin"
 claude_json="${HOME}/.claude.json"
 keep_lens=0
 keep_mcp=0
+keep_hooks=0
+settings_json="${HOME}/.claude/settings.json"
 dry_run=0
 quiet=0
 strict=0
@@ -76,12 +81,15 @@ while [[ $# -gt 0 ]]; do
     --claude-json=*) require_eq_value "--claude-json=" "${1#--claude-json=}"; claude_json="${1#--claude-json=}"; shift ;;
     --keep-lens)    keep_lens=1; shift ;;
     --keep-mcp)     keep_mcp=1; shift ;;
+    --keep-hooks)   keep_hooks=1; shift ;;
+    --settings)     require_value "--settings" "${2:-}"; settings_json="$2"; shift 2 ;;
+    --settings=*)   require_eq_value "--settings=" "${1#--settings=}"; settings_json="${1#--settings=}"; shift ;;
     --dry-run)      dry_run=1; shift ;;
     --quiet)        quiet=1;   shift ;;
     --strict)       strict=1;  shift ;;
     --allow-root)   allow_root=1; shift ;;
     -h|--help)
-      sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     --version)
       sc_version
@@ -224,5 +232,29 @@ elif [[ -f "${claude_json}" ]]; then
   fi
   if ! "${_sc_script_dir}/install-mcp.sh" "${mcp_args[@]}"; then
     echo "uninstall.sh: WARNING — install-mcp.sh --remove failed; mcpServers.lens entry may still be in ${claude_json}." >&2
+  fi
+fi
+
+# Hook cleanup. install-hooks.sh --remove handles backup + atomic rewrite, drops
+# only entries whose command names lens_guard.sh, and leaves every hook the user
+# registered themselves untouched.
+if [[ "${keep_hooks}" == 1 ]]; then
+  log "uninstall.sh: --keep-hooks passed; left the lens-first guard in ${settings_json}."
+elif [[ -f "${settings_json}" ]]; then
+  hooks_args=(--settings "${settings_json}" --remove)
+  if [[ "${dry_run}" == 1 ]]; then
+    hooks_args+=(--dry-run)
+  fi
+  if [[ "${quiet}" == 1 ]]; then
+    hooks_args+=(--quiet)
+  fi
+  if [[ "${strict}" == 1 ]]; then
+    hooks_args+=(--strict)
+  fi
+  if [[ "${allow_root}" == 1 ]]; then
+    hooks_args+=(--allow-root)
+  fi
+  if ! "${_sc_script_dir}/install-hooks.sh" "${hooks_args[@]}"; then
+    echo "uninstall.sh: WARNING — install-hooks.sh --remove failed; the lens-first guard may still be in ${settings_json}." >&2
   fi
 fi

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Install the shipped skills (pro-coder, diagram) into ~/.claude/skills/.
 #
-# By default, also (a) builds the bundled `lens` binary under ~/.claude/bin and
+# By default, also (a) builds the bundled `lens` binary under ~/.claude/bin,
 # (b) registers it as an MCP server in ~/.claude.json so Claude Code calls
-# lens verbs as structured tools rather than via Bash. Pass --no-lens to skip
-# the build, --no-mcp to skip the MCP wire-up.
+# lens verbs as structured tools rather than via Bash, and (c) registers the
+# lens-first PreToolUse guard in ~/.claude/settings.json so the skill's
+# "lens before Grep/Read" rule is enforced rather than merely stated.
+# Pass --no-lens to skip the build, --no-mcp to skip the MCP wire-up,
+# --no-hooks to skip the guard.
 #
 # Usage:
 #   scripts/install.sh                   # skill + lens + MCP wire-up (default)
@@ -15,6 +18,8 @@
 #   scripts/install.sh --force           # overwrite existing destination + force lens rebuild
 #   scripts/install.sh --no-lens         # skip building the lens binary (and MCP)
 #   scripts/install.sh --no-mcp          # build lens but skip the ~/.claude.json wire-up
+#   scripts/install.sh --no-hooks        # skip registering the lens-first PreToolUse guard
+#   scripts/install.sh --settings P      # custom settings.json (default: ~/.claude/settings.json)
 #   scripts/install.sh --bin-dir DIR     # custom lens binary dest (default: ~/.claude/bin)
 #   scripts/install.sh --claude-json P   # custom claude.json (default: ~/.claude.json)
 #   scripts/install.sh --dry-run         # print what would be done; make no changes
@@ -42,6 +47,8 @@ dest_root="${HOME}/.claude/skills"
 force=0
 install_lens=1
 install_mcp=1
+install_hooks=1
+settings_json="${HOME}/.claude/settings.json"
 lens_bin_dir="${HOME}/.claude/bin"
 claude_json="${HOME}/.claude.json"
 dry_run=0
@@ -92,6 +99,9 @@ while [[ $# -gt 0 ]]; do
     --force)   force=1;        shift ;;
     --no-lens) install_lens=0; install_mcp=0; shift ;;
     --no-mcp)  install_mcp=0; shift ;;
+    --no-hooks) install_hooks=0; shift ;;
+    --settings)     require_value "--settings" "${2:-}"; settings_json="$2"; shift 2 ;;
+    --settings=*)   require_eq_value "--settings=" "${1#--settings=}"; settings_json="${1#--settings=}"; shift ;;
     --bin-dir)      require_value "--bin-dir" "${2:-}"; lens_bin_dir="$2"; shift 2 ;;
     --bin-dir=*)    require_eq_value "--bin-dir=" "${1#--bin-dir=}"; lens_bin_dir="${1#--bin-dir=}"; shift ;;
     --claude-json)  require_value "--claude-json" "${2:-}"; claude_json="$2"; shift 2 ;;
@@ -101,7 +111,7 @@ while [[ $# -gt 0 ]]; do
     --strict)  strict=1;  shift ;;
     --allow-root) allow_root=1; shift ;;
     -h|--help)
-      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     --version)
       sc_version
@@ -152,6 +162,7 @@ if [[ "${strict}" == 1 ]]; then
   sc_assert_strict_allowed "${dest_root}"   "${HOME}" "install.sh" || exit 1
   sc_assert_strict_allowed "${lens_bin_dir}" "${HOME}" "install.sh" || exit 1
   sc_assert_strict_allowed "${claude_json}"  "${HOME}" "install.sh" || exit 1
+  sc_assert_strict_allowed "${settings_json}" "${HOME}" "install.sh" || exit 1
 fi
 
 if [[ "${dry_run}" == 1 ]]; then
@@ -176,7 +187,11 @@ for skill_name in "${skill_names[@]}"; do
       already_correct=1
     fi
   elif [[ "${mode}" == "copy" ]] && [[ -d "${dest}" ]] && [[ ! -L "${dest}" ]] && [[ -f "${dest}/SKILL.md" ]]; then
-    if cmp -s "${src}/SKILL.md" "${dest}/SKILL.md"; then
+    # Compare the whole tree, not just SKILL.md. Since v8 a skill ships
+    # references/, hooks/ and scripts/ alongside SKILL.md; a SKILL.md-only
+    # comparison would silently skip an install whose only change was a
+    # reference file or the guard hook.
+    if diff -r -q "${src}" "${dest}" >/dev/null 2>&1; then
       already_correct=1
     fi
   fi
@@ -300,6 +315,35 @@ if [[ "${install_mcp}" == 1 ]] && [[ "${install_lens}" == 1 ]]; then
   fi
 elif [[ "${install_mcp}" == 0 ]]; then
   log "install.sh: --no-mcp passed; skipped ~/.claude.json wire-up. lens still works via Bash CLI."
+fi
+
+# Register the lens-first PreToolUse guard. This is what turns SKILL.md's
+# "lens is required" from prose into a mechanism: without it the model keeps the
+# cheap Grep/Read path available and, under context pressure, takes it.
+#
+# Safe to register globally: the hook is inert in any project that lacks both a
+# lens index and the pro-coder guard marker, so it never fires during ordinary
+# Claude Code work elsewhere on the machine.
+if [[ "${install_hooks}" == 1 ]]; then
+  hooks_args=(--settings "${settings_json}" --skills-dir "${dest_root}")
+  if [[ "${dry_run}" == 1 ]]; then
+    hooks_args+=(--dry-run)
+  fi
+  if [[ "${quiet}" == 1 ]]; then
+    hooks_args+=(--quiet)
+  fi
+  if [[ "${strict}" == 1 ]]; then
+    hooks_args+=(--strict)
+  fi
+  if [[ "${allow_root}" == 1 ]]; then
+    hooks_args+=(--allow-root)
+  fi
+  log "install.sh: registering the lens-first guard in ${settings_json} (pass --no-hooks to skip)"
+  if ! "${script_dir}/install-hooks.sh" "${hooks_args[@]}"; then
+    echo "install.sh: WARNING — install-hooks.sh failed. The skill still runs, but the lens-first rule is advisory only: nothing will stop a drift back to Grep/Read." >&2
+  fi
+else
+  log "install.sh: --no-hooks passed; the lens-first rule is advisory only (nothing enforces it)."
 fi
 
 if [[ "${dry_run}" == 1 ]]; then

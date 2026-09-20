@@ -8,6 +8,86 @@ may break compatibility on minor bumps.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-21
+
+Fixes the reported behaviour that `/pro-coder` **followed the phase steps but
+never used lens**. Nothing was wrong with the install: lens was on `$PATH`, the
+MCP server was registered, and the skill was byte-identical to the repo. The
+skill simply was not enforcing itself.
+
+The diagnosis, from a project where pro-coder had demonstrably run before (its
+`.claude/state/` notes are git-tracked) yet had no `.lens/index.db` and no
+`current-tasks.md`: bootstrap was being **skipped wholesale**, not lens
+specifically. Three causes, all now addressed.
+
+### Added
+- **`pro-coder/hooks/lens_guard.sh` — a `PreToolUse` guard that enforces
+  lens-first.** The mandate used to be prose ("REQUIRED", "there is no
+  fallback"); prose loses to a one-call native tool under context pressure.
+  The hook blocks tree-wide `Grep` and blocks `Read` of a file over 400 lines
+  when no `offset`/`limit` is given, and names the lens command to run instead.
+
+  Deliberately narrow: inert unless the project has **both** `.lens/index.db`
+  and `.claude/state/pro-coder-guard`, so ordinary Claude Code work in every
+  other project is untouched. Fails open on any parse error. A `Grep` scoped to
+  a single file is allowed — the protocol has always sanctioned that. Ledger
+  files (`current-tasks.md`, `CLAUDE.md`, `schema.txt`, `.claude/state/*`) are
+  exempt from the Read rule. Session escape hatch: `PRO_CODER_GUARD=0`;
+  threshold override: `LENS_GUARD_MAX_READ_LINES`.
+- **`pro-coder/scripts/bootstrap.sh` — bootstrap as one Bash call.** Creates and
+  re-verifies `.claude/state/`, `code-map/`, `.history/` and `current-tasks.md`;
+  reports gitignore-policy, `CLAUDE.md`, code-map and database-schema status;
+  runs `lens init && lens index` or `lens update`; arms the guard. Exits 1 with
+  the protocol's exact `> ABORT:` string when lens is missing or a ledger file
+  cannot be created. There is no longer a "did four of the five steps" outcome.
+- **`scripts/install-hooks.sh`** — registers/unregisters the guard in
+  `~/.claude/settings.json`. Idempotent, backs up first, atomic write, preserves
+  every hook the user registered themselves. Wired into `install.sh`
+  (`--no-hooks` to skip) and `uninstall.sh` (`--keep-hooks` to keep).
+- **`scripts/_json_edit.py` + `scripts/_json_edit.js`** — one shared JSON editor
+  behind `sc_json_edit`, used by both `install-mcp.sh` and `install-hooks.sh`.
+  Refuses to write when the target will not parse, prunes emptied parents,
+  writes atomically.
+- **`sc_json_runtime` / `sc_json_edit` in `_lib.sh`** — picks python3, python or
+  node by *executing* a trivial program rather than trusting `command -v`.
+- 51 new assertions covering the JSON editor, hook registration round-trip,
+  bootstrap (including the abort path), and the guard's allow/deny decisions.
+  Suite is now **114 assertions**; `skill_meta.sh` is now **62**.
+
+### Changed
+- **`SKILL.md` split: 844 lines / 76KB → 291 lines / 25KB.** Everything was in
+  one file, and the middle sagged — the phase headings survived the read while
+  the lens mandate (Bootstrap Step 5 and the tooling table) did not. Mechanics
+  moved to `pro-coder/references/`: `phases.md`, `output-format.md`, `modes.md`,
+  `checklists.md`, `memory.md`. The core keeps every heading with a summary and
+  a pointer, so the skeleton stays navigable and the lens contract sits in it.
+- **P1 now loads the lens MCP verbs via `ToolSearch` as its second action.**
+  Those tools are deferred in most sessions — schemas absent, calls fail — and
+  `SKILL.md` only ever mentioned MCP in passing. Unloaded, every lens verb cost
+  a Bash round-trip while `Grep`/`Read` cost one native call; loaded, they cost
+  the same. This removes the cost asymmetry the drift fed on.
+- **`install-mcp.sh` no longer hard-depends on `python3`.** Its gate was
+  `command -v python3`, which *passes* on Windows where the App Execution Alias
+  stubs sit on `$PATH`, print "Python was not found" and exit 49 — so the
+  install died mid-JSON-surgery on exactly the machines least likely to have a
+  real Python. Now goes through `sc_json_edit`, which probes and falls back to
+  node.
+- `install.sh` compares the whole skill tree for idempotency, not just
+  `SKILL.md`. With `references/`, `hooks/` and `scripts/` now shipping inside
+  the skill, a `SKILL.md`-only comparison would skip an install whose only
+  change was a reference file or the guard.
+- Protocol version banner: v7 → v8.
+
+### Fixed
+- Dangling `P6.7` cross-reference in `SKILL.md` (the CLAUDE.md proposal queue is
+  P6 step 3). This was a real, previously-failing `skill_meta.sh` assertion.
+
+### Known issues
+- `round_trip_symlink_install_succeeded` fails under MSYS/git-bash on Windows
+  without Developer Mode: `ln -s` silently creates a directory copy instead of a
+  link, so `install.sh`'s symlink verification correctly refuses. Pre-existing
+  and environmental; the default `--copy` path is unaffected.
+
 ## [0.5.1] - 2026-09-18
 
 Fixes `/pro-coder` being rejected outright on Fable 5.1 with

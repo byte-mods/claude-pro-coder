@@ -205,7 +205,7 @@ grep -A2 '"lens"' ~/.claude.json
 
 # 5. Run the install/uninstall round-trip test suite
 bash scripts/test/round_trip.sh
-# expected output ends with: "Total: 73, Failures: 0"
+# expected output ends with: "Total: 114, Failures: 0"
 # tests canonicalisation, safe-dest guard, orphan-staging reap, and
 # both copy + symlink install/uninstall round-trips against /tmp jails.
 ```
@@ -218,7 +218,11 @@ bash scripts/test/round_trip.sh
 
 | Path | Purpose |
 |---|---|
-| `~/.claude/skills/pro-coder/SKILL.md` | The skill definition. Loaded by Claude Code at startup. |
+| `~/.claude/skills/pro-coder/SKILL.md` | The skill definition (core protocol, ~290 lines). Loaded by Claude Code at startup. |
+| `~/.claude/skills/pro-coder/references/` | Phase mechanics, output format, modes, checklists, memory rules. Loaded on demand, not at startup. |
+| `~/.claude/skills/pro-coder/scripts/bootstrap.sh` | One-call bootstrap run at every P1. |
+| `~/.claude/skills/pro-coder/hooks/lens_guard.sh` | PreToolUse guard that enforces lens-before-Grep/Read. |
+| `~/.claude/settings.json` | Gets the `hooks.PreToolUse` entry pointing at the guard. Backed up to `~/.claude/settings.json.bak.YYYYMMDD-HHMMSS` before any write. |
 | `~/.claude/bin/lens` | The bundled lens binary (if cargo was available). |
 | `~/.claude/bin/.lens.installed.sha` | Content hash of vendored lens source — used for idempotent rebuild detection. |
 | `~/.claude.json` | Claude Code config; gets the `mcpServers.lens` entry pointing at the binary. Backed up to `~/.claude.json.bak.YYYYMMDD-HHMMSS` before any write. |
@@ -228,6 +232,9 @@ bash scripts/test/round_trip.sh
 
 | Path | Purpose | Lifetime | Owner |
 |---|---|---|---|
+| `<project>/.claude/state/pro-coder-guard` | Marker that arms the lens-first guard. Without it the hook is inert, so other projects are unaffected | Project | agent |
+| `<project>/current-tasks.md` | Single source of truth for in-flight work — queued, in progress, completed | Project | agent (writes), user (reads) |
+| `<project>/.history/YYYY-MM-DD/` | Write-only archive of every changed file, by task close date | Project | agent |
 | `<project>/.claude/state/gitignore_policy` | One-line marker (`ignore` or `commit`) so the bootstrap question is asked once per project | Project | agent |
 | `<project>/.claude/state/code-map/` | Persistent symbol-area notes with `file:line` anchors | Project | agent (writes), user (reads) |
 | `<project>/.claude/state/current_section.md` | Snapshot at section boundary — verified facts, open invariants, next-section blast radius | Overwritten each P6 | agent |
@@ -242,7 +249,7 @@ bash scripts/test/round_trip.sh
 |---|---|
 | `~/code/claude-skill/pro-coder/SKILL.md` | The skill source. Edit + reinstall to customise. |
 | `~/code/claude-skill/lens/` | Vendored lens crate (Rust workspace: `lens-core` + `lens-cli`). Pinned at `lens/VENDOR.txt`. |
-| `~/code/claude-skill/scripts/` | `install.sh`, `install-lens.sh`, `install-mcp.sh`, `uninstall.sh`, `_lib.sh`, `test/round_trip.sh`. |
+| `~/code/claude-skill/scripts/` | `install.sh`, `install-lens.sh`, `install-mcp.sh`, `install-hooks.sh`, `uninstall.sh`, `_lib.sh`, `_json_edit.py`/`_json_edit.js`, `test/round_trip.sh`, `test/skill_meta.sh`. |
 
 ---
 

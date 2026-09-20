@@ -34,9 +34,40 @@ installs into `~/.claude/skills/pro-coder/`, `~/.claude/bin/lens`, and
 - `lens/README.md` is vendored content and may contain stale references
   (e.g. `super-coder`). It is intentionally not edited in-place.
 
+### Skill payload (`pro-coder/`)
+
+- `SKILL.md` is the **core protocol only** and is budgeted at **≤400 lines**
+  (`skill_meta.sh` enforces it). Detail belongs in `references/`. The v8
+  split exists because a single 844-line file sagged in the middle and the
+  lens mandate stopped being followed; letting detail creep back into the
+  core restores that failure mode.
+- Every `references/*.md` must be pointed at from `SKILL.md`, and every
+  pointer in `SKILL.md` must resolve. Both directions are tested.
+- `pro-coder/scripts/bootstrap.sh` and `pro-coder/hooks/lens_guard.sh` are
+  **standalone** — the skill installs without the repo's `scripts/`, so they
+  must not source `_lib.sh`. The `_lib.sh` invariants above govern the
+  install pipeline, not the skill payload.
+- `lens_guard.sh` **fails open**, always exits 0, and stays inert unless the
+  project has both `.lens/index.db` and `.claude/state/pro-coder-guard`. A
+  guard that breaks a session is worse than a guard that misses a case.
+
+### JSON surgery
+
+- `scripts/_json_edit.py` and `scripts/_json_edit.js` are behavioural twins.
+  Change one, change the other, and cover it in `round_trip.sh` — `_lib.sh`
+  picks by runtime availability, so a divergence makes behaviour depend on
+  what is on `$PATH`.
+- Never gate on `command -v python3`. Windows ships App Execution Alias stubs
+  that pass that check and exit 49. Use `sc_json_runtime`, which probes by
+  executing.
+
 ### Testing
 
 - `bash scripts/test/round_trip.sh` must report `Failures: 0`.
+  (Known exception: `round_trip_symlink_install_succeeded` fails under
+  MSYS/git-bash on Windows without Developer Mode, where `ln -s` makes a
+  directory copy rather than a link.)
+- `bash scripts/test/skill_meta.sh` must report `Failures: 0`.
 - The suite passes from any directory; uses `/tmp` directly (not
   `${TMPDIR}`, which macOS resolves under `/var/` — tripping the guard).
 - Add new tests for new behaviour; update the assertion count in docs.
@@ -69,7 +100,13 @@ installs into `~/.claude/skills/pro-coder/`, `~/.claude/bin/lens`, and
 
 | Path | Purpose |
 |---|---|
-| `pro-coder/SKILL.md` | Skill definition (Brainiac-OS v5) |
+| `pro-coder/SKILL.md` | Skill definition (Brainiac-OS v8) — core protocol only |
+| `pro-coder/references/` | Phase mechanics, output format, modes, checklists, memory — loaded on demand |
+| `pro-coder/scripts/bootstrap.sh` | One-call P1 bootstrap (standalone; does not source `_lib.sh`) |
+| `pro-coder/hooks/lens_guard.sh` | `PreToolUse` guard enforcing lens-before-Grep/Read |
+| `scripts/install-hooks.sh` | Registers/removes the guard in `~/.claude/settings.json` |
+| `scripts/_json_edit.py` / `.js` | Shared JSON editor (behavioural twins) |
+| `scripts/test/skill_meta.sh` | Meta-tests for the skill bundle |
 | `lens/` | Vendored Rust CLI (do not edit in place) |
 | `scripts/_lib.sh` | Shared safety helpers |
 | `scripts/install.sh` | Orchestrator |

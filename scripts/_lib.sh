@@ -216,3 +216,50 @@ sc_assert_safe_dest() {
   esac
   return 0
 }
+
+sc_json_runtime() {
+  # Emit the name of a usable JSON runtime on stdout ("python3", "python" or
+  # "node"), or return 1 when the machine has none.
+  #
+  # Why a probe and not a bare `command -v`: Windows ships App Execution Alias
+  # stubs for python/python3 that ARE on $PATH, print "Python was not found",
+  # and exit 49. A `command -v python3` check passes on such a machine and the
+  # install then dies mid-JSON-surgery. Executing a trivial program is the only
+  # honest test of "can this interpreter run".
+  #
+  # Order is preference order: python3 is the documented prerequisite, python
+  # covers distros that never shipped the suffixed name, node is the fallback
+  # for machines (notably Windows) that have no working Python at all.
+  local candidate
+  for candidate in python3 python node; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      # `-c` for the Pythons, `-e` for node; try both rather than branching on
+      # the name, so a future runtime with either flag works unchanged.
+      if "${candidate}" -c 'pass' >/dev/null 2>&1 || "${candidate}" -e '' >/dev/null 2>&1; then
+        echo "${candidate}"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+sc_json_edit() {
+  # sc_json_edit <file> <op> [args...] — run the shared JSON editor under
+  # whichever runtime this machine has. Stdout/stderr/exit code pass through
+  # untouched so callers can branch on CHANGED / NOCHANGE and on exit 3.
+  #
+  # The .py and .js implementations are behavioural twins; see the header of
+  # scripts/_json_edit.py. Callers must not care which one ran.
+  local runtime lib_dir
+  if ! runtime="$(sc_json_runtime)"; then
+    echo "sc_json_edit: no usable JSON runtime found (tried python3, python, node)." >&2
+    echo "sc_json_edit: install Python 3 or Node.js, or edit the JSON file by hand." >&2
+    return 127
+  fi
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  case "${runtime}" in
+    node) "${runtime}" "${lib_dir}/_json_edit.js" "$@" ;;
+    *)    "${runtime}" "${lib_dir}/_json_edit.py" "$@" ;;
+  esac
+}

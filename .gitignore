@@ -20,3 +20,15 @@ lens/**/graphify-out/
 # All Markdown files — user request
 tmp/
 *.md
+
+# ...except the skill payload's markdown, which is source, not notes. SKILL.md
+# points at every file under pro-coder/references/ and install.sh ships them;
+# excluded, a fresh clone would install a skill whose pointers resolve to
+# nothing. (SKILL.md, README.md, CHANGELOG.md and CLAUDE.md predate the rule and
+# stay tracked because *.md does not apply to already-tracked files.)
+!pro-coder/**/*.md
+
+# pro-coder lens-first guard marker — machine-local, arms the PreToolUse hook.
+# Not committed: whether the guard is armed is a property of a working copy,
+# not of the project.
+.claude/state/pro-coder-guard

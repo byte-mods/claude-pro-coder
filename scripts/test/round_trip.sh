@@ -14,6 +14,11 @@
 #   6. test_install_extended_flags — --dest=VALUE form, --quiet, --dry-run on install.sh
 #   7. test_skill_meta            — frontmatter, required sections, P-refs, code-fence balance
 #   8. test_strict_and_root_guards — sc_assert_strict_allowed and sc_assert_not_root
+#   9. test_json_edit             — shared JSON editor: merges, prunes, refuses malformed
+#  10. test_install_hooks         — register/idempotent/remove the lens-first guard
+#  11. test_bootstrap             — pro-coder/scripts/bootstrap.sh aborts without lens,
+#                                   creates the ledger files, arms the guard, is idempotent
+#  12. test_lens_guard            — the hook's allow/deny decisions and fail-open behaviour
 #
 # Why /tmp not ${TMPDIR}: macOS sets TMPDIR to /var/folders/... which the
 # safety guard correctly refuses (matches /var/*). Tests use /tmp directly;
@@ -454,6 +459,228 @@ test_strict_and_root_guards() {
   fi
 }
 
+# --- Test 9: shared JSON editor ------------------------------------------
+#
+# _json_edit.{py,js} is the single point where the installer mutates the user's
+# claude.json and settings.json. Two properties matter more than any other and
+# are what these cases pin down: it never touches a key it was not asked about,
+# and it refuses rather than overwrites when the file will not parse.
+
+test_json_edit() {
+  echo "[9] shared JSON editor"
+
+  local jail; jail="$(mktemp -d /tmp/sc-json.XXXXXX)"
+  local f="${jail}/cfg.json"
+
+  if ! sc_json_runtime >/dev/null 2>&1; then
+    fail "json_runtime_available — no python3/python/node found; JSON surgery cannot run"
+    return
+  fi
+  pass json_runtime_available
+
+  # Foreign keys must survive every operation.
+  echo '{"theme":"dark","mcpServers":{"other":{"command":"x"}}}' > "${f}"
+
+  assert_eq json_set_reports_changed \
+    "$(sc_json_edit "${f}" set mcpServers.lens '{"command":"/l","args":["mcp"]}')" "CHANGED"
+  assert_eq json_set_is_idempotent \
+    "$(sc_json_edit "${f}" set mcpServers.lens '{"command":"/l","args":["mcp"]}')" "NOCHANGE"
+  assert_eq json_get_roundtrips \
+    "$(sc_json_edit "${f}" get mcpServers.command 2>/dev/null; sc_json_edit "${f}" get mcpServers.other.command)" '"x"'
+  assert_eq json_unset_reports_changed \
+    "$(sc_json_edit "${f}" unset mcpServers.lens)" "CHANGED"
+  assert_eq json_unset_is_idempotent \
+    "$(sc_json_edit "${f}" unset mcpServers.lens)" "NOCHANGE"
+  assert_true json_foreign_key_preserved grep -q '"theme"' "${f}"
+  assert_true json_sibling_server_preserved grep -q '"other"' "${f}"
+
+  # `get` on an absent path exits 3 — distinguishable from an error (1). Capture
+  # the status rather than letting `set -e` treat this deliberate miss as fatal.
+  local rc=0
+  sc_json_edit "${f}" get nope.nothing >/dev/null 2>&1 || rc=$?
+  assert_eq json_get_missing_exits_3 "${rc}" "3"
+
+  # Pruning: unsetting the last child removes the now-empty parent rather than
+  # leaving an orphan "mcpServers": {} behind.
+  echo '{"mcpServers":{"lens":{"command":"/l"}}}' > "${f}"
+  sc_json_edit "${f}" unset mcpServers.lens >/dev/null
+  assert_false json_empty_parent_pruned grep -q 'mcpServers' "${f}"
+
+  # Hook upsert/remove must leave a hook the user registered themselves alone.
+  echo '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"mine.sh"}]}]}}' > "${f}"
+  assert_eq json_hook_upsert_changed \
+    "$(sc_json_edit "${f}" hook-upsert PreToolUse 'Grep|Read' 'bash /x/lens_guard.sh')" "CHANGED"
+  assert_eq json_hook_upsert_idempotent \
+    "$(sc_json_edit "${f}" hook-upsert PreToolUse 'Grep|Read' 'bash /x/lens_guard.sh')" "NOCHANGE"
+  assert_true json_hook_user_entry_survives_upsert grep -q 'mine.sh' "${f}"
+  assert_eq json_hook_remove_changed \
+    "$(sc_json_edit "${f}" hook-remove PreToolUse 'lens_guard')" "CHANGED"
+  assert_eq json_hook_remove_idempotent \
+    "$(sc_json_edit "${f}" hook-remove PreToolUse 'lens_guard')" "NOCHANGE"
+  assert_true json_hook_user_entry_survives_remove grep -q 'mine.sh' "${f}"
+  assert_false json_hook_ours_gone grep -q 'lens_guard' "${f}"
+
+  # Malformed input must abort, not overwrite. Losing a real claude.json to a
+  # parse slip is the worst outcome this tool could have.
+  printf 'definitely not json' > "${f}"
+  assert_false json_refuses_malformed sc_json_edit "${f}" set a '1'
+  assert_true  json_malformed_left_intact grep -q 'definitely not json' "${f}"
+
+  rm -rf "${jail}"
+}
+
+# --- Test 10: hook registration round-trip -------------------------------
+
+test_install_hooks() {
+  echo "[10] lens-first hook registration"
+
+  local jail; jail="$(mktemp -d /tmp/sc-hooks.XXXXXX)"
+  local skills="${jail}/skills"
+  local settings="${jail}/settings.json"
+  mkdir -p "${skills}/pro-coder/hooks"
+  cp "${repo_root}/pro-coder/hooks/lens_guard.sh" "${skills}/pro-coder/hooks/"
+  echo '{"theme":"dark","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"mine.sh"}]}]}}' > "${settings}"
+
+  # --dry-run must leave the file byte-identical.
+  local before; before="$(cat "${settings}")"
+  "${scripts_dir}/install-hooks.sh" --settings "${settings}" --skills-dir "${skills}" --dry-run --quiet >/dev/null 2>&1
+  assert_eq hooks_dry_run_writes_nothing "$(cat "${settings}")" "${before}"
+
+  assert_true hooks_install_succeeds \
+    "${scripts_dir}/install-hooks.sh" --settings "${settings}" --skills-dir "${skills}" --quiet
+  assert_true hooks_command_registered grep -q 'lens_guard.sh' "${settings}"
+  assert_true hooks_matcher_registered grep -q 'Grep|Read' "${settings}"
+  assert_true hooks_user_hook_preserved grep -q 'mine.sh' "${settings}"
+
+  # Re-running must not stack a second copy of our entry.
+  "${scripts_dir}/install-hooks.sh" --settings "${settings}" --skills-dir "${skills}" --quiet >/dev/null 2>&1
+  assert_eq hooks_install_idempotent \
+    "$(grep -c 'lens_guard.sh' "${settings}" | tr -d ' ')" "1"
+
+  assert_true hooks_remove_succeeds \
+    "${scripts_dir}/install-hooks.sh" --settings "${settings}" --skills-dir "${skills}" --remove --quiet
+  assert_false hooks_command_gone grep -q 'lens_guard.sh' "${settings}"
+  assert_true hooks_user_hook_still_there grep -q 'mine.sh' "${settings}"
+
+  # A missing hook script is an error, not a silently broken registration.
+  rm -f "${skills}/pro-coder/hooks/lens_guard.sh"
+  assert_false hooks_refuses_missing_script \
+    "${scripts_dir}/install-hooks.sh" --settings "${settings}" --skills-dir "${skills}" --quiet
+
+  rm -rf "${jail}"
+}
+
+# --- Test 11: bootstrap script -------------------------------------------
+
+test_bootstrap() {
+  echo "[11] pro-coder bootstrap"
+
+  local bootstrap="${repo_root}/pro-coder/scripts/bootstrap.sh"
+  local jail; jail="$(mktemp -d /tmp/sc-boot.XXXXXX)"
+  mkdir -p "${jail}/proj"
+
+  # Without lens on $PATH the script must ABORT rather than run degraded. This
+  # is the whole point of "lens is required, there is no fallback".
+  local out
+  out="$(cd "${jail}/proj" && PATH="/usr/bin:/bin" bash "${bootstrap}" 2>&1 || true)"
+  case "${out}" in
+    *"ABORT: lens binary not found"*) pass bootstrap_aborts_without_lens ;;
+    *) fail "bootstrap_aborts_without_lens — got: ${out}" ;;
+  esac
+  assert_false bootstrap_abort_exit_nonzero \
+    env PATH="/usr/bin:/bin" bash -c "cd '${jail}/proj' && bash '${bootstrap}' >/dev/null 2>&1"
+
+  # It must not half-create state on the abort path either.
+  assert_false bootstrap_no_guard_marker_on_abort test -f "${jail}/proj/.claude/state/pro-coder-guard"
+
+  if command -v lens >/dev/null 2>&1; then
+    out="$(cd "${jail}/proj" && bash "${bootstrap}" 2>&1 || true)"
+    case "${out}" in
+      *"BOOTSTRAP OK"*) pass bootstrap_completes_with_lens ;;
+      *) fail "bootstrap_completes_with_lens — got: ${out}" ;;
+    esac
+    assert_true bootstrap_creates_history      test -d "${jail}/proj/.history"
+    assert_true bootstrap_creates_task_ledger  test -f "${jail}/proj/current-tasks.md"
+    assert_true bootstrap_creates_code_map_dir test -d "${jail}/proj/.claude/state/code-map"
+    assert_true bootstrap_creates_lens_index   test -f "${jail}/proj/.lens/index.db"
+    assert_true bootstrap_arms_guard           test -f "${jail}/proj/.claude/state/pro-coder-guard"
+    # Second run must be a clean no-op, not a re-index or a duplicated ledger.
+    out="$(cd "${jail}/proj" && bash "${bootstrap}" 2>&1 || true)"
+    case "${out}" in
+      *"BOOTSTRAP OK"*) pass bootstrap_is_idempotent ;;
+      *) fail "bootstrap_is_idempotent — got: ${out}" ;;
+    esac
+    assert_eq bootstrap_ledger_not_duplicated \
+      "$(grep -c '^# Current Tasks' "${jail}/proj/current-tasks.md" | tr -d ' ')" "1"
+  else
+    pass "bootstrap_completes_with_lens (skipped — lens not on PATH)"
+  fi
+
+  rm -rf "${jail}"
+}
+
+# --- Test 12: the guard hook's decisions ---------------------------------
+
+test_lens_guard() {
+  echo "[12] lens-first guard decisions"
+
+  local hook="${repo_root}/pro-coder/hooks/lens_guard.sh"
+  local jail; jail="$(mktemp -d /tmp/sc-guard.XXXXXX)"
+  local armed="${jail}/armed"
+  local bare="${jail}/bare"
+  mkdir -p "${armed}/.lens" "${armed}/.claude/state" "${armed}/src" "${bare}/.lens"
+  : > "${armed}/.lens/index.db"
+  : > "${armed}/.claude/state/pro-coder-guard"
+  : > "${bare}/.lens/index.db"
+  awk 'BEGIN{for(i=0;i<900;i++) print "line"}' > "${armed}/src/big.rs"
+  awk 'BEGIN{for(i=0;i<20;i++) print "line"}'  > "${armed}/src/small.rs"
+  awk 'BEGIN{for(i=0;i<900;i++) print "line"}' > "${armed}/current-tasks.md"
+
+  # decides <payload> -> prints "deny" or "allow"
+  decides() {
+    local out
+    out="$(printf '%s' "$1" | bash "${hook}" 2>/dev/null)"
+    case "${out}" in
+      *'"permissionDecision":"deny"'*) echo deny ;;
+      *) echo allow ;;
+    esac
+  }
+
+  assert_eq guard_denies_tree_wide_grep \
+    "$(decides "{\"cwd\":\"${armed}\",\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"fn main\"}}")" "deny"
+  assert_eq guard_denies_large_unranged_read \
+    "$(decides "{\"cwd\":\"${armed}\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"${armed}/src/big.rs\"}}")" "deny"
+
+  # Every allow below is an escape the protocol explicitly sanctions.
+  assert_eq guard_allows_file_scoped_grep \
+    "$(decides "{\"cwd\":\"${armed}\",\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"x\",\"path\":\"${armed}/src/big.rs\"}}")" "allow"
+  assert_eq guard_allows_small_read \
+    "$(decides "{\"cwd\":\"${armed}\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"${armed}/src/small.rs\"}}")" "allow"
+  assert_eq guard_allows_ranged_read \
+    "$(decides "{\"cwd\":\"${armed}\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"${armed}/src/big.rs\",\"offset\":10,\"limit\":50}}")" "allow"
+  assert_eq guard_allows_ledger_read \
+    "$(decides "{\"cwd\":\"${armed}\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"${armed}/current-tasks.md\"}}")" "allow"
+  assert_eq guard_ignores_other_tools \
+    "$(decides "{\"cwd\":\"${armed}\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}")" "allow"
+
+  # Scope: a lens index alone must not arm the guard, or every project that ever
+  # ran lens would lose Grep in ordinary Claude Code sessions.
+  assert_eq guard_inert_without_marker \
+    "$(decides "{\"cwd\":\"${bare}\",\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"x\"}}")" "allow"
+
+  # Fail-open: garbage in, allow out.
+  assert_eq guard_fails_open_on_garbage "$(decides 'not json at all')" "allow"
+  assert_eq guard_fails_open_on_empty   "$(decides '')" "allow"
+
+  # Env escape hatch.
+  local escaped
+  escaped="$(printf '%s' "{\"cwd\":\"${armed}\",\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"x\"}}" \
+    | PRO_CODER_GUARD=0 bash "${hook}" 2>/dev/null)"
+  assert_eq guard_env_escape_hatch "${escaped}" ""
+
+  rm -rf "${jail}"
+}
+
 # --- Driver --------------------------------------------------------------
 
 test_canonicalize
@@ -464,6 +691,10 @@ test_round_trip_symlink
 test_install_extended_flags
 test_skill_meta
 test_strict_and_root_guards
+test_json_edit
+test_install_hooks
+test_bootstrap
+test_lens_guard
 
 echo
 echo "----------------------------------------"

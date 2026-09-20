@@ -90,16 +90,6 @@ if [[ "${strict}" == 1 ]]; then
   sc_assert_strict_allowed "${claude_json}" "${HOME}" "install-mcp.sh" || exit 1
 fi
 
-# Ensure Python 3 is available — required for safe JSON surgery. We do not
-# fall back to bash/jq because bash JSON is fragile and jq is not guaranteed
-# present on macOS.
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "install-mcp.sh: python3 not found on PATH. Install Python 3 to enable MCP auto-wire," >&2
-  echo "install-mcp.sh: or wire lens manually by adding to ${claude_json}:" >&2
-  echo "install-mcp.sh:   \"mcpServers\": { \"lens\": { \"command\": \"${lens_bin}\", \"args\": [\"mcp\"] } }" >&2
-  exit 1
-fi
-
 # When adding (not removing), ensure the lens binary actually exists. A broken
 # command in mcpServers makes Claude Code emit confusing startup errors — far
 # worse than a missing entry.
@@ -111,116 +101,68 @@ if [[ "${remove}" != 1 ]]; then
   fi
 fi
 
-# --- The Python merge. ---
+# --- The merge -------------------------------------------------------------
 #
-# Operation: read claude.json (default {} if missing), set or remove the
-# mcpServers.lens entry, write atomically. Unicode-safe via ensure_ascii=False.
-# Output is pretty-printed with 2-space indent (matches claude.json's style).
-python3 - "$claude_json" "$lens_bin" "$remove" "$dry_run" <<'PYEOF'
-import json
-import os
-import sys
-import tempfile
-import time
+# Delegated to scripts/_json_edit.{py,js} via sc_json_edit, which reads the file
+# (default {} when missing), refuses outright if it is malformed rather than
+# overwriting a config it could not parse, and writes atomically via a sibling
+# tmp file plus rename.
+#
+# This used to be an inline python3 heredoc gated on `command -v python3`. That
+# gate passes on Windows, where the App Execution Alias stubs for python/python3
+# sit on $PATH, print "Python was not found" and exit 49 — so the install died
+# mid-surgery on exactly the machines least likely to have a real Python.
+# sc_json_runtime probes by executing a trivial program and falls back to node.
 
-claude_json_path = sys.argv[1]
-lens_bin = sys.argv[2]
-remove = sys.argv[3] == "1"
-dry_run = sys.argv[4] == "1"
+target="{\"command\":\"${lens_bin}\",\"args\":[\"mcp\"]}"
 
-# Read existing config — default to empty object if missing or malformed
-# (we'd rather refuse to corrupt a real config than silently create one,
-# so malformed = abort with a clear error).
-existing = {}
-existed_before = os.path.exists(claude_json_path)
-if existed_before:
-    try:
-        with open(claude_json_path, "r", encoding="utf-8") as f:
-            existing = json.load(f)
-        if not isinstance(existing, dict):
-            print(
-                f"install-mcp.sh: {claude_json_path} is not a JSON object (got {type(existing).__name__}); refusing to merge.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(
-            f"install-mcp.sh: {claude_json_path} is not valid JSON: {e}. Refusing to overwrite.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+before="$(sc_json_edit "${claude_json}" get mcpServers.lens 2>/dev/null || true)"
 
-# Compute the desired state.
-mcp_servers = existing.get("mcpServers")
-if mcp_servers is not None and not isinstance(mcp_servers, dict):
-    print(
-        f"install-mcp.sh: existing mcpServers is not an object; refusing to merge.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+# Probe before logging, so an already-correct config reports "no action" rather
+# than an "UPDATE x -> x" line that reads like a write happened.
+if [[ "${remove}" == 1 ]]; then
+  if [[ -z "${before}" ]]; then
+    log "install-mcp.sh: no mcpServers.lens entry to remove; nothing to do."
+    exit 0
+  fi
+  probe="$(sc_json_edit "${claude_json}" unset mcpServers.lens --dry-run)" || exit 1
+else
+  probe="$(sc_json_edit "${claude_json}" set mcpServers.lens "${target}" --dry-run)" || exit 1
+fi
 
-before_lens = (mcp_servers or {}).get("lens")
-if remove:
-    if mcp_servers is None or "lens" not in mcp_servers:
-        print("install-mcp.sh: no mcpServers.lens entry to remove; nothing to do.")
-        sys.exit(0)
-    desired = dict(existing)
-    new_mcp = dict(mcp_servers)
-    new_mcp.pop("lens", None)
-    if new_mcp:
-        desired["mcpServers"] = new_mcp
-    else:
-        # Don't leave behind an empty mcpServers object.
-        desired.pop("mcpServers", None)
-else:
-    target = {"command": lens_bin, "args": ["mcp"]}
-    if before_lens == target:
-        print(f"install-mcp.sh: mcpServers.lens already up-to-date in {claude_json_path}. No action.")
-        sys.exit(0)
-    desired = dict(existing)
-    new_mcp = dict(mcp_servers) if mcp_servers else {}
-    new_mcp["lens"] = target
-    desired["mcpServers"] = new_mcp
+if [[ "${probe}" == "NOCHANGE" ]]; then
+  log "install-mcp.sh: mcpServers.lens already up-to-date in ${claude_json}. No action."
+  exit 0
+fi
 
-# Diff summary for the user — show what changed without dumping the entire file.
-def short(v):
-    return json.dumps(v, ensure_ascii=False)
+if [[ "${remove}" == 1 ]]; then
+  log "install-mcp.sh: REMOVE mcpServers.lens (was ${before})"
+elif [[ -z "${before}" ]]; then
+  log "install-mcp.sh: ADD mcpServers.lens = ${target}"
+else
+  log "install-mcp.sh: UPDATE mcpServers.lens: ${before} -> ${target}"
+fi
 
-if before_lens is None and not remove:
-    print(f"install-mcp.sh: ADD mcpServers.lens = {short(desired['mcpServers']['lens'])}")
-elif remove:
-    print(f"install-mcp.sh: REMOVE mcpServers.lens (was {short(before_lens)})")
-else:
-    print(f"install-mcp.sh: UPDATE mcpServers.lens: {short(before_lens)} -> {short(desired['mcpServers']['lens'])}")
+if [[ "${dry_run}" == 1 ]]; then
+  log "install-mcp.sh: --dry-run: no changes written."
+  exit 0
+fi
 
-if dry_run:
-    print("install-mcp.sh: --dry-run: no changes written.")
-    sys.exit(0)
+# Backup before writing — only when the file existed. A backup of a file we are
+# about to create from scratch is noise.
+if [[ -f "${claude_json}" ]]; then
+  backup="${claude_json}.bak.$(date '+%Y%m%d-%H%M%S')"
+  cp -p "${claude_json}" "${backup}"
+  log "install-mcp.sh: backed up to ${backup}"
+fi
 
-# Backup before writing — only if the file existed.
-if existed_before:
-    backup = f"{claude_json_path}.bak.{time.strftime('%Y%m%d-%H%M%S')}"
-    with open(claude_json_path, "rb") as src, open(backup, "wb") as dst:
-        dst.write(src.read())
-    print(f"install-mcp.sh: backed up to {backup}")
+if [[ "${remove}" == 1 ]]; then
+  sc_json_edit "${claude_json}" unset mcpServers.lens >/dev/null || exit 1
+else
+  sc_json_edit "${claude_json}" set mcpServers.lens "${target}" >/dev/null || exit 1
+fi
 
-# Atomic write: temp file in the same dir, then rename.
-out_dir = os.path.dirname(os.path.abspath(claude_json_path)) or "."
-fd, tmp = tempfile.mkstemp(prefix=".claude.json.staging.", dir=out_dir, text=True)
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(desired, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp, claude_json_path)
-except Exception:
-    # Best-effort cleanup of the temp file if rename failed.
-    try:
-        os.unlink(tmp)
-    except OSError:
-        pass
-    raise
-
-print(f"install-mcp.sh: wrote {claude_json_path}")
-if not remove:
-    print("install-mcp.sh: restart Claude Code to pick up the new MCP server.")
-PYEOF
+log "install-mcp.sh: wrote ${claude_json}"
+if [[ "${remove}" != 1 ]]; then
+  log "install-mcp.sh: restart Claude Code to pick up the new MCP server."
+fi
